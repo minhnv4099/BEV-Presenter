@@ -32,6 +32,7 @@ from mmengine.registry import \
     WEIGHT_INITIALIZERS as MMENGINE_WEIGHT_INITIALIZERS
 from mmengine.registry import Registry, build_from_cfg
 
+
 PACKAGE = 'src.bevformer'
 
 # manage all kinds of runners like `EpochBasedRunner` and `IterBasedRunner`
@@ -86,14 +87,24 @@ WEIGHT_INITIALIZERS = Registry(
     locations=[f'{PACKAGE}.models'])
 
 # manage all kinds of transformer layer
+ATTENTIONS = Registry(
+    'attention',
+    scope='attention',
+    parent=MODELS,
+    locations=[f'{PACKAGE}.models']
+)
 TRANSFORMER_LAYERS = Registry(
     "transformer_layer",
     scope="transformer_layer",
-    locations=[f'{PACKAGE}.models'])
-ATTENTIONS = Registry(
-    'attention',
-    scope='attentions',
-    locations=[f'{PACKAGE}.models'])
+    parent=MODELS,
+    locations=[f'{PACKAGE}.models'],
+)
+TRANSFORMER_BLOCKS = Registry(
+    "transformer_block",
+    scope="transformer_block",
+    parent=MODELS,
+    locations=[f'{PACKAGE}.models']
+)
 
 # mangage all kinds of optimizers like `SGD` and `Adam`
 OPTIMIZERS = Registry(

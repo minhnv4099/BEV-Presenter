@@ -3,7 +3,7 @@
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
 import sys
-import time
+from time import time
 import inspect
 from typing import Optional, Callable, Union, Any
 import functools
@@ -13,21 +13,139 @@ from .logging import getLogger
 logger = getLogger(__name__)
 
 
-def timing(func: Callable[..., Any]):
-    @functools.wraps(func)
-    def timing_wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        elapsed_time = int(time.time() - start_time)
+def timing(scope: Optional[str] = None):
+    def timing_decorator(func: Callable[..., Any]):
+        @functools.wraps(func)
+        def timing_wrapper(*args, **kwargs):
+            start_time = time()
+            result = func(*args, **kwargs)
+            elapsed_time = int(time() - start_time)
 
-        module = inspect.getmodule(sys._getframe())
-        # print(inspect.getmodule(sys._getframe(0)))
-        # print(inspect.getmodule(sys._getframe(1)))
-        # print(inspect.getmodule(sys._getframe(2)))
-        # print(inspect.getmodule(sys._getframe(3)))
-        # print(inspect.getmodule(sys._getframe(4)))
-        logger.info(f"{func.__name__!r} executed in {elapsed_time}s.")
+            module = inspect.getmodule(sys._getframe())
+            # print(inspect.getmodule(sys._getframe(0)))
+            # print(inspect.getmodule(sys._getframe(1)))
+            # print(inspect.getmodule(sys._getframe(2)))
+            # print(inspect.getmodule(sys._getframe(3)))
+            # print(inspect.getmodule(sys._getframe(4)))
+            where = func.__name__ if scope is None else scope + '.' + func.__name__
+            logger.info(f"{where!r} executed in {elapsed_time}s.")
 
-        return result
+            return result
+        return timing_wrapper
+    return timing_decorator
 
-    return timing_wrapper
+
+class TimerError(Exception):
+
+    def __init__(self, message):
+        self.message = message
+        super().__init__(message)
+
+
+class Timer:
+    """A flexible Timer class.
+
+    Examples:
+        >>> import time
+        >>> import mmcv
+        >>> with mmcv.Timer():
+        >>>     # simulate a code block that will run for 1s
+        >>>     time.sleep(1)
+        1.000
+        >>> with mmcv.Timer(print_tmpl='it takes {:.1f} seconds'):
+        >>>     # simulate a code block that will run for 1s
+        >>>     time.sleep(1)
+        it takes 1.0 seconds
+        >>> timer = mmcv.Timer()
+        >>> time.sleep(0.5)
+        >>> print(timer.since_start())
+        0.500
+        >>> time.sleep(0.5)
+        >>> print(timer.since_last_check())
+        0.500
+        >>> print(timer.since_start())
+        1.000
+    """
+
+    def __init__(self, start=True, print_tmpl=None):
+        self._is_running = False
+        self.print_tmpl = print_tmpl if print_tmpl else '{:.3f}'
+        if start:
+            self.start()
+
+    @property
+    def is_running(self):
+        """bool: indicate whether the timer is running"""
+        return self._is_running
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        print(self.print_tmpl.format(self.since_last_check()))
+        self._is_running = False
+
+    def start(self):
+        """Start the timer."""
+        if not self._is_running:
+            self._t_start = time()
+            self._is_running = True
+        self._t_last = time()
+
+    def since_start(self):
+        """Total time since the timer is started.
+
+        Returns:
+            float: Time in seconds.
+        """
+        if not self._is_running:
+            raise TimerError('timer is not running')
+        self._t_last = time()
+        return self._t_last - self._t_start
+
+    def since_last_check(self):
+        """Time since the last checking.
+
+        Either :func:`since_start` or :func:`since_last_check` is a checking
+        operation.
+
+        Returns:
+            float: Time in seconds.
+        """
+        if not self._is_running:
+            raise TimerError('timer is not running')
+        dur = time() - self._t_last
+        self._t_last = time()
+        return dur
+
+
+_g_timers = {}  # global timers
+
+
+def check_time(timer_id):
+    """Add check points in a single line.
+
+    This method is suitable for running a task on a list of items. A timer will
+    be registered when the method is called for the first time.
+
+    Examples:
+        >>> import time
+        >>> import mmcv
+        >>> for i in range(1, 6):
+        >>>     # simulate a code block
+        >>>     time.sleep(i)
+        >>>     mmcv.check_time('task1')
+        2.000
+        3.000
+        4.000
+        5.000
+
+    Args:
+        str: Timer identifier.
+    """
+    if timer_id not in _g_timers:
+        _g_timers[timer_id] = Timer()
+        return 0
+    else:
+        return _g_timers[timer_id].since_last_check()

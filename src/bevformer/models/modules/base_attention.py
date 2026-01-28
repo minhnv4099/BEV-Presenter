@@ -2,6 +2,7 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
+import warnings
 from typing import Optional
 
 import torch
@@ -9,13 +10,14 @@ import torch.nn as nn
 from mmengine.model import BaseModule
 
 from src.utils.logging import getLogger
-from src.registry import ATTENTIONS
+from src.registry import ATTENTIONS, MODELS
 from src.utils.telemetry import timing
 from ..utils.pytorch_utils import (
     find_prunable_heads_and_indices,
     prune_linear_layer,
 )
 from ..activations import ACT2FN
+from .configs import BaseTransformerConfig
 
 logger = getLogger(__name__)
 
@@ -25,8 +27,8 @@ def eager_attention_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    head_mask: Optional[torch.Tensor],
     attention_mask: Optional[torch.Tensor],
+    head_mask: Optional[torch.Tensor],
     scaling: float,
     dropout: float = 0.0,
     **kwargs,
@@ -84,7 +86,6 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-@ATTENTIONS.register_module()
 class BaseSelfAttention(BaseModule):
     relative_position_embedding_types = ("relative_key", "relative_key_query")
 
@@ -119,32 +120,56 @@ class BaseSelfAttention(BaseModule):
             self.max_position_embeddings = config.max_position_embeddings
             self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
-    @timing
     def forward(
         self,
-        hidden_states: torch.FloatTensor,
+        query: torch.Tensor,
+        key: Optional[torch.Tensor] = None,
+        value: Optional[torch.Tensor] = None,
+        query_pos: Optional[torch.Tensor] = None,
+        key_pos: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        output_attention: bool = False
+        output_attention: bool = False,
+        **kwargs
     ):
-        batch_size, seq_len, hidden_size = hidden_states.shape
+        key = key if key is not None else query
+        value = value if value is not None else key
+        key_pos = key_pos if key_pos is not None else query_pos
+
+        if query_pos is not None:
+            if query_pos.dim() == query.dim() - 1:
+                query += query_pos[None]
+            else:
+                query += query_pos
+        else:
+            warnings.warn(
+                "`query_pos` is not set, we assume given `query` has position information already.",
+            )
+
+        if key_pos is not None:
+            if key_pos.dim() == key.dim() - 1:
+                key += key_pos[None]
+            else:
+                key += key_pos
+        else:
+            warnings.warn(
+                "`key_pos` is not set, we assume given `key` has position information already."
+            )
+
+        batch_size, seq_len, hidden_size = query.shape
         view_shape = (batch_size, -1, self.num_attention_heads, self.attention_head_size)
 
-        queries: torch.Tensor = self.q_proj(hidden_states).view(*view_shape).transpose(1, 2)
-
-        is_cross_attention = encoder_hidden_states is not None
-        current_states = encoder_hidden_states if is_cross_attention else hidden_states
-
-        keys: torch.Tensor = self.k_proj(current_states).view(*view_shape).transpose(1, 2)
-        values: torch.Tensor = self.v_proj(current_states).view(*view_shape).transpose(1, 2)
+        query: torch.Tensor = self.q_proj(query).view(*view_shape).transpose(1, 2)
+        key: torch.Tensor = self.k_proj(key).view(*view_shape).transpose(1, 2)
+        value: torch.Tensor = self.v_proj(value).view(*view_shape).transpose(1, 2)
 
         context, attention_weights = eager_attention_forward(
             module=self,
-            query=queries,
-            key=keys,
-            value=values,
-            attention_mask=attention_mask,
+            query=query,
+            key=key,
+            value=value,
+            attention_mask=attn_mask or attention_mask,
             head_mask=head_mask,
             scaling=1,
             dropout=self.attention_probs_dropout_prob
@@ -168,20 +193,25 @@ class BaseSelfOutput(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    @timing
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states
 
 
+@ATTENTIONS.register_module()
 class BaseAttention(nn.Module):
     """Multihead self-attention -> Output projection"""
-    def __init__(self, config):
+
+    def __init__(self, config, **kwargs):
         super().__init__()
+
+        config = config or BaseTransformerConfig()
         self.attention = BaseSelfAttention(config)
-        self.output = BaseSelfOutput(config)
+        self.output_proj = BaseSelfOutput(config)
         self.pruned_heads = set()
+
+        self.embed_dims = config.hidden_size
 
     def prune_heads(self, heads: set[int]):
         if len(heads) == 0:
@@ -194,31 +224,54 @@ class BaseAttention(nn.Module):
         )
 
         # Prune linear layers
-        self.attention.query = prune_linear_layer(self.attention.query, index)
-        self.attention.key = prune_linear_layer(self.attention.key, index)
-        self.attention.value = prune_linear_layer(self.attention.value, index)
-        self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
+        self.attention.q_proj = prune_linear_layer(self.attention.q_proj, index)
+        self.attention.k_proj = prune_linear_layer(self.attention.k_proj, index)
+        self.attention.v_proj = prune_linear_layer(self.attention.v_proj, index)
+        self.output_proj.dense = prune_linear_layer(self.output_proj.dense, index, dim=1)
 
         # Update hyper params and store pruned heads
         self.attention.num_attention_heads = self.attention.num_attention_heads - len(heads)
         self.attention.all_head_size = self.attention.attention_head_size * self.attention.num_attention_heads
         self.pruned_heads = self.pruned_heads.union(heads)
 
+    @timing(scope="BaseAttention")
     def forward(
         self,
-        hidden_states: torch.FloatTensor,
+        query: torch.Tensor,
+        key: Optional[torch.Tensor] = None,
+        value: Optional[torch.Tensor] = None,
+        identity: Optional[torch.Tensor] = None,
+        query_pos: Optional[torch.Tensor] = None,
+        key_pos: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
+        output_attention: bool = False,
+        **kwargs
     ) -> torch.Tensor:
-        self_attn_output, _ = self.attention(hidden_states, attention_mask, head_mask, encoder_hidden_states)
-        output = self.output(self_attn_output)
+        attn_output, _ = self.attention(
+            query,
+            key,
+            value,
+            query_pos, key_pos,
+            attn_mask=attn_mask,
+            head_mask=head_mask,
+            **kwargs
+        )
+        output = self.output_proj(attn_output)
+
+        if identity is not None:
+            output = output + identity
+
         return output
 
 
+@MODELS.register_module()
 class BaseFeedForward(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, **kwargs):
         super().__init__()
+        config = config or BaseTransformerConfig()
+
         self.ff_layer1 = nn.Linear(config.hidden_size, config.intermediate_size)
         if isinstance(config.hidden_act, str):
             self.intermediate_act_fn = ACT2FN[config.hidden_act]
@@ -226,13 +279,15 @@ class BaseFeedForward(nn.Module):
             self.intermediate_act_fn = config.hidden_act
 
         self.ff_layer2 = nn.Linear(config.intermediate_size, config.hidden_size)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob, inplace=True)
 
-    def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, identity: Optional[torch.Tensor] = None) -> torch.Tensor:
         hidden_states = self.ff_layer1(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
         hidden_states = self.ff_layer2(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = hidden_states + input_tensor
+
+        if identity is not None:
+            hidden_states = hidden_states + identity
 
         return hidden_states

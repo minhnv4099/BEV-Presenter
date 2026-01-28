@@ -432,7 +432,7 @@ class ResNetBackbone(ResNetPreTrainedModel):
         # initialize weights and apply final processing
         self.post_init()
 
-    @timing
+    @timing("ResNetBackbone")
     def forward(
         self,
         pixel_values: Tensor,
