@@ -69,7 +69,6 @@ class CustomMSDeformableAttention(BaseModule):
                              f'but got {embed_dims} and {num_heads}')
         dim_per_head = embed_dims // num_heads
         self.norm_cfg = norm_cfg
-        self.dropout = nn.Dropout(dropout)
         self.batch_first = batch_first
         self.fp16_enabled = False
 
@@ -103,6 +102,8 @@ class CustomMSDeformableAttention(BaseModule):
             out_features=num_heads * num_levels * num_points)
         self.value_proj = nn.Linear(embed_dims, embed_dims)
         self.output_proj = nn.Linear(embed_dims, embed_dims)
+        self.dropout = nn.Dropout(dropout)
+
         self.init_weights()
 
     def init_weights(self):

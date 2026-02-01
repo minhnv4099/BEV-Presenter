@@ -2,19 +2,20 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
-
 from __future__ import annotations
 
 import warnings
+from typing import Optional
 from collections import OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.batchnorm import _BatchNorm
 
 from mmengine.model import BaseModule
-from src.registry import MODELS
-from torch.nn.modules.batchnorm import _BatchNorm
+from src.registry import MODELS, BACKBONES
+from src.typing import ConfigType
 
 
 VoVNet19_slim_dw_eSE = {
@@ -275,9 +276,18 @@ class _OSA_stage(nn.Sequential):
 
 
 @MODELS.register_module()
+@BACKBONES.register_module()
 class VoVNet(BaseModule):
-    def __init__(self, spec_name, input_ch=3, out_features=None, 
-                 frozen_stages=-1, norm_eval=True, pretrained=None, init_cfg=None):
+    def __init__(
+        self,
+        spec_name: str,
+        input_ch: int = 3,
+        out_features: Optional[list[str]] = None,
+        frozen_stages: int = -1,
+        norm_eval: bool = True,
+        pretrained: Optional[dict] = None,
+        init_cfg: Optional[ConfigType] = None
+    ):
         """
         Args:
             input_ch(int) : the number of input channel

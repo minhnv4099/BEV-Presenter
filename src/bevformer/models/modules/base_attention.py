@@ -133,30 +133,6 @@ class BaseSelfAttention(BaseModule):
         output_attention: bool = False,
         **kwargs
     ):
-        key = key if key is not None else query
-        value = value if value is not None else key
-        key_pos = key_pos if key_pos is not None else query_pos
-
-        if query_pos is not None:
-            if query_pos.dim() == query.dim() - 1:
-                query += query_pos[None]
-            else:
-                query += query_pos
-        else:
-            warnings.warn(
-                "`query_pos` is not set, we assume given `query` has position information already.",
-            )
-
-        if key_pos is not None:
-            if key_pos.dim() == key.dim() - 1:
-                key += key_pos[None]
-            else:
-                key += key_pos
-        else:
-            warnings.warn(
-                "`key_pos` is not set, we assume given `key` has position information already."
-            )
-
         batch_size, seq_len, hidden_size = query.shape
         view_shape = (batch_size, -1, self.num_attention_heads, self.attention_head_size)
 
@@ -190,11 +166,11 @@ class BaseSelfOutput(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.output_proj = nn.Linear(config.hidden_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.dense(hidden_states)
+        hidden_states = self.output_proj(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states
 
@@ -203,7 +179,7 @@ class BaseSelfOutput(nn.Module):
 class BaseAttention(nn.Module):
     """Multihead self-attention -> Output projection"""
 
-    def __init__(self, config, **kwargs):
+    def __init__(self, config: Optional[BaseTransformerConfig] = None, **kwargs):
         super().__init__()
 
         config = config or BaseTransformerConfig()
@@ -227,7 +203,7 @@ class BaseAttention(nn.Module):
         self.attention.q_proj = prune_linear_layer(self.attention.q_proj, index)
         self.attention.k_proj = prune_linear_layer(self.attention.k_proj, index)
         self.attention.v_proj = prune_linear_layer(self.attention.v_proj, index)
-        self.output_proj.dense = prune_linear_layer(self.output_proj.dense, index, dim=1)
+        self.output_proj.output_proj = prune_linear_layer(self.output_proj.output_proj, index, dim=1)
 
         # Update hyper params and store pruned heads
         self.attention.num_attention_heads = self.attention.num_attention_heads - len(heads)
@@ -249,6 +225,26 @@ class BaseAttention(nn.Module):
         output_attention: bool = False,
         **kwargs
     ) -> torch.Tensor:
+        key = key if key is not None else query
+        value = value if value is not None else key
+        key_pos = key_pos if key_pos is not None else query_pos
+
+        if query_pos is not None:
+            if query_pos.dim() == query.dim() - 1:
+                query += query_pos[None]
+            else:
+                query += query_pos
+        else:
+            warnings.warn("`query_pos` is missing.")
+
+        if key_pos is not None:
+            if key_pos.dim() == key.dim() - 1:
+                key += key_pos[None]
+            else:
+                key += key_pos
+        else:
+            warnings.warn("`key_pos` is missing.")
+
         attn_output, _ = self.attention(
             query,
             key,

@@ -15,7 +15,8 @@ class BaseDownChannel(nn.Module):
         self,
         in_channels: list[int] = (512, 1024, 2048),
         out_channel: int = 256,
-        conv_bias: bool = False
+        conv_bias: bool = False,
+        **kwargs
     ):
         super().__init__()
 

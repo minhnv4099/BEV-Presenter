@@ -77,3 +77,8 @@ class BackboneOutput(ModelOutput):
     feature_maps: Optional[tuple[Tensor]] = None
     hidden_states: Optional[tuple[Tensor]] = None
     attentions: Optional[Tensor] = None
+
+
+@dataclass
+class BEVFormerEncoderOutput(ModelOutput):
+    bev_feat: Optional[Tensor] = None

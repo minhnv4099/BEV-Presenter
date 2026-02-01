@@ -29,7 +29,7 @@ class TemporalSelfAttention(BaseModule):
     Args:
         embed_dims (int): The embedding dimension of Attention.
             Default: 256.
-        num_heads (int): Parallel attention heads. Default: 64.
+        num_heads (int): Parallel attention heads. Default: 8.
         num_levels (int): The number of feature maps used in
             Attention. Default: 4.
         num_points (int): The number of sampling points for
@@ -39,14 +39,14 @@ class TemporalSelfAttention(BaseModule):
         dropout_p (float): A Dropout layer on `inp_identity`.
             Default: 0.1.
         batch_first (bool): Key, Query and Value are shape of
-            (batch, n, embed_dim)
-            or (n, batch, embed_dim). Default to True.
+            `(bs, n, embed_dim)` or `(n, batch, embed_dim)`.
+            Default to ``True``.
         norm_cfg (dict): Config dict for normalization layer.
             Default: None.
         init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
             Default: None.
-        num_bev_queue (int): In this version, we only use one history BEV and one currenct BEV.
-         the length of BEV queue is 2.
+        num_bev_queue (int): In this version, we only use one history BEV and one current BEV query.
+         So the length of BEV queue is 2.
     """
 
     def __init__(
@@ -71,14 +71,13 @@ class TemporalSelfAttention(BaseModule):
 
         dim_per_head = embed_dims // num_heads
         self.norm_cfg = norm_cfg
-        self.dropout = nn.Dropout(dropout_p)  # type: ignore
         self.batch_first = batch_first
         self.fp16_enabled = False
         self._is_init = False
 
         # you'd better set dim_per_head to a power of 2
         # which is more efficient in the CUDA implementation
-        def _is_power_of_2(n):
+        def _is_power_of_2(n: int):
             if (not isinstance(n, int)) or (n < 0):
                 raise ValueError(
                     'invalid input for _is_power_of_2: {} (type: {})'.format(
@@ -87,8 +86,8 @@ class TemporalSelfAttention(BaseModule):
 
         if not _is_power_of_2(dim_per_head):
             warnings.warn(
-                "You'd better set embed_dims in "
-                'MultiScaleDeformAttention to make '
+                "You'd better set `embed_dims` in "
+                '`MultiScaleDeformAttention` to make '
                 'the dimension of each attention head a power of 2 '
                 'which is more efficient in our CUDA implementation.')
 
@@ -99,20 +98,24 @@ class TemporalSelfAttention(BaseModule):
         self.num_points = num_points
         self.num_bev_queue = num_bev_queue
 
-        # sub-network to computer offset
+        # linear projection to compute offset
         self.sampling_offsets = nn.Linear(
             in_features=embed_dims*self.num_bev_queue,
             out_features=num_bev_queue * num_heads * num_levels * num_points * 2
         )
-        # Use a sub-network to computer attention weights instead of
+        # linear projection to computer attention weights instead of
         # dot product between query and key
+        # because key is dynamic
         self.attention_weights = nn.Linear(
             in_features=embed_dims*self.num_bev_queue,
             out_features=num_bev_queue * num_heads * num_levels * num_points
         )
         # NOTE: why not need query_proj
+        # query use to compute offset
+        # no for attention computing, so no need
         self.value_proj = nn.Linear(embed_dims, embed_dims)
         self.output_proj = nn.Linear(embed_dims, embed_dims)
+        self.dropout = nn.Dropout(dropout_p)  # type: ignore
 
         self.init_weights()
 
@@ -146,9 +149,10 @@ class TemporalSelfAttention(BaseModule):
         identity: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
         key_pos: Optional[Tensor] = None,
+        atten_mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
         reference_points: Optional[Tensor] = None,
-        feature_spatial_shapes: Optional[Tensor] = None,
+        spatial_shapes: Optional[Tensor] = None,
         level_start_index: Optional[Tensor] = None,
         flag: str = 'decoder',
         **kwargs
@@ -156,12 +160,13 @@ class TemporalSelfAttention(BaseModule):
         """Forward Function of MultiScaleDeformAttention.
 
         Args:
-            query (Tensor): Query of Transformer with shape
-                (num_query, bs, embed_dims).
+            query (Tensor):
+                The input query with shape [num_queries, bs, embed_dims]
+                if self.batch_first is False, else `[bs, num_queries embed_dims]`.
             key (Tensor): The key tensor with shape
-                `(num_key, bs, embed_dims)`. It isn't used in this attention module.
-            value (Tensor): The value tensor with shape
-                `(num_key, bs, embed_dims)`.
+                `(bs, num_value, embed_dims)`. It isn't used in this attention module.
+            value (Tensor): The value tensor with shape [num_queries, bs, embed_dims]
+                if self.batch_first is False, else `[bs, num_queries, embed_dims]`.
             identity (Tensor): The tensor used for addition, with the
                 same shape as `query`. Default None. If None,
                 `query` will be used.
@@ -171,6 +176,7 @@ class TemporalSelfAttention(BaseModule):
                 None.
             reference_points (Tensor): The normalized reference
                 points with shape (bs, num_query, num_levels, 2),
+                `(bs*2, num_bew_query, num_bev_level [1], 2)`
                 all elements is range in [0, 1], top-left (0,0),
                 bottom-right (1, 1), including padding area.
                 or (N, Length_{query}, num_levels, 4), add
@@ -178,7 +184,7 @@ class TemporalSelfAttention(BaseModule):
                 form reference boxes.
             key_padding_mask (Tensor): ByteTensor for `query`, with
                 shape [bs, num_key].
-            feature_spatial_shapes (Tensor): Spatial shape of features in
+            spatial_shapes (Tensor): Spatial shape of features in
                 different levels. With shape (num_levels, 2),
                 last dimension represents (h, w).
             level_start_index (Tensor): The start index of each level.
@@ -198,51 +204,62 @@ class TemporalSelfAttention(BaseModule):
             identity = query
         if query_pos is not None:
             query = query + query_pos
+
         if not self.batch_first:
             # change to (bs, num_query, embed_dims)
             query = query.permute(1, 0, 2)
             value = value.permute(1, 0, 2)
+
         bs,  num_query, embed_dims = query.shape
         _, num_value, _ = value.shape
-        assert (feature_spatial_shapes[:, 0] * feature_spatial_shapes[:, 1]).sum() == num_value
+        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
         assert self.num_bev_queue == 2
 
+        # (bs, num_query, embed_dims*2)
         query = torch.cat([value[:bs], query], -1)
         value = self.value_proj(value)
 
         if key_padding_mask is not None:
             value = value.masked_fill(key_padding_mask[..., None], 0.0)
 
-        value = value.reshape(bs*self.num_bev_queue,
-                              num_value, self.num_heads, -1)
+        # `(bs*num_bev_queue, num_value, num_head, head_dim)`
+        value = value.reshape(bs*self.num_bev_queue, num_value, self.num_heads, -1)
 
+        # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points * 2)
         sampling_offsets = self.sampling_offsets(query)
+        # (bs, num_query, num_heads, num_bev_queue, num_levels, num_points, 2)
         sampling_offsets = sampling_offsets.view(
             bs, num_query, self.num_heads,  self.num_bev_queue, self.num_levels, self.num_points, 2)
+        # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points)
+        # (bs, num_query, num_heads, num_bev_queue, num_levels * num_points)
         attention_weights = self.attention_weights(query).view(
             bs, num_query,  self.num_heads, self.num_bev_queue, self.num_levels * self.num_points)
+        # weights over sampling points and levels
         attention_weights = attention_weights.softmax(-1)
 
+        # (bs, num_query, num_heads, num_bev_queue, num_levels, num_points)
         attention_weights = attention_weights.view(
             bs, num_query, self.num_heads,
             self.num_bev_queue, self.num_levels,
             self.num_points)
 
+        # (bs, num_bev_queue, num_query, num_heads, num_levels, num_points)
+        # (bs*num_bev_queue, num_query, num_heads, num_levels, num_points)
         attention_weights = attention_weights.permute(0, 3, 1, 2, 4, 5)\
             .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points).contiguous()
-        # (bs, n_query, n_heads,  n_bev_queue, n_levels, n_points, 2)
-        # -> (bs, n_bev_queue, n_query, n_heads, n_levels, n_points, 2)
-        # -> (bs*n_bev_queue, n_query, n_heads, n_levels, n_points, 2)
+        # (bs, n_bev_queue, num_query, n_heads, n_levels, n_points, 2)
+        # (bs*n_bev_queue, num_query, n_heads, n_levels, n_points, 2)
         sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6)\
             .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points, 2)
 
         if reference_points.shape[-1] == 2:
+            # size of bev plane
             offset_normalizer = torch.stack(
-                [feature_spatial_shapes[..., 1], feature_spatial_shapes[..., 0]], -1)
+                [spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
+            # normalized sampling locations
             sampling_locations = reference_points[:, :, None, :, None, :] \
-                + sampling_offsets \
-                / offset_normalizer[None, None, None, :, None, :]
-
+                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+        # two-stage
         elif reference_points.shape[-1] == 4:
             sampling_locations = reference_points[:, :, None, :, None, :2] \
                 + sampling_offsets / self.num_points \
@@ -263,10 +280,10 @@ class TemporalSelfAttention(BaseModule):
             #     attention_weights, self.im2col_step)
 
             output = multi_scale_deformable_attn_pytorch(
-                value, feature_spatial_shapes, sampling_locations, attention_weights)
+                value, spatial_shapes, sampling_locations, attention_weights)
         else:
             output = multi_scale_deformable_attn_pytorch(
-                value, feature_spatial_shapes, sampling_locations, attention_weights)
+                value, spatial_shapes, sampling_locations, attention_weights)
 
         # output shape (bs*num_bev_queue, num_query, embed_dims)
         # (bs*num_bev_queue, num_query, embed_dims)-> (num_query, embed_dims, bs*num_bev_queue)
@@ -275,6 +292,7 @@ class TemporalSelfAttention(BaseModule):
         # fuse history value and current value
         # (num_query, embed_dims, bs*num_bev_queue)-> (num_query, embed_dims, bs, num_bev_queue)
         output = output.view(num_query, embed_dims, bs, self.num_bev_queue)
+        # (num_query, embed_dims, bs)
         output = output.mean(-1)
 
         # (num_query, embed_dims, bs)-> (bs, num_query, embed_dims)

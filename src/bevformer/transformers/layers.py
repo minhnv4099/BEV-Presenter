@@ -5,8 +5,10 @@
 import warnings
 import copy
 import torch
+from typing import Optional
 
-from src.registry import TRANSFORMER_LAYERS
+from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
+from src.typing import ConfigType, OptionalTensor, Tensor
 from mmengine.model import BaseModule, ModuleList
 from mmengine.config import ConfigDict
 
@@ -251,7 +253,7 @@ class BaseTransformerLayer(BaseModule):
         return query
 
 
-@TRANSFORMER_LAYERS.register_module()
+@TRANSFORMER_BLOCKS.register_module()
 class TransformerLayerSequence(BaseModule):
     """Base class for TransformerEncoder and TransformerDecoder in vision
     transformer.
@@ -261,66 +263,79 @@ class TransformerLayerSequence(BaseModule):
     of `transformer_layer` in `transformer_coder`.
 
     Args:
-        transformerlayer (list[obj:`mmcv.ConfigDict`] |
-            obj:`mmcv.ConfigDict`): Config of transformerlayer
-            in TransformerCoder. If it is obj:`mmcv.ConfigDict`,
-             it would be repeated `num_layer` times to a
-             list[`mmcv.ConfigDict`]. Default: None.
+        transformerlayer (list[obj:`mmcv.ConfigDict`] | obj:`mmcv.ConfigDict`):
+            Config of transformerlayer in TransformerCoder. If it is obj:`mmcv.ConfigDict`,
+             it would be repeated `num_layer` times to a list[`mmcv.ConfigDict`]. Default: None.
         num_layers (int): The number of `TransformerLayer`. Default: None.
         init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
             Default: None.
     """
 
-    def __init__(self, transformerlayers=None, num_layers=None, init_cfg=None):
+    def __init__(
+        self,
+        transformerlayers: Optional[ConfigType] = None,
+        num_layers: Optional[int] = None,
+        init_cfg: Optional[ConfigType] = None
+    ):
         super().__init__(init_cfg)
         if isinstance(transformerlayers, dict):
             transformerlayers = [
                 copy.deepcopy(transformerlayers) for _ in range(num_layers)
             ]
         else:
-            assert isinstance(transformerlayers, list) and \
-                   len(transformerlayers) == num_layers
+            assert isinstance(transformerlayers, list) and len(transformerlayers) == num_layers
+
         self.num_layers = num_layers
         self.layers = ModuleList()
+
         for i in range(num_layers):
             self.layers.append(build_transformer_layer(transformerlayers[i]))
+
         self.embed_dims = self.layers[0].embed_dims
         self.pre_norm = self.layers[0].pre_norm
 
-    def forward(self,
-                query,
-                key,
-                value,
-                query_pos=None,
-                key_pos=None,
-                attn_masks=None,
-                query_key_padding_mask=None,
-                key_padding_mask=None,
-                **kwargs):
+    def forward(
+        self,
+        query: Tensor,
+        key: Optional[Tensor] = None,
+        value: Optional[Tensor] = None,
+        query_pos: Optional[Tensor] = None,
+        key_pos: Optional[Tensor] = None,
+        attn_masks: Optional[Tensor] = None,
+        query_key_padding_mask: Optional[Tensor] = None,
+        key_padding_mask: Optional[Tensor] = None,
+        **kwargs
+    ):
         """Forward function for `TransformerCoder`.
 
         Args:
-            query (Tensor): Input query with shape
-                `(num_queries, bs, embed_dims)`.
-            key (Tensor): The key tensor with shape
-                `(num_keys, bs, embed_dims)`.
-            value (Tensor): The value tensor with shape
-                `(num_keys, bs, embed_dims)`.
-            query_pos (Tensor): The positional encoding for `query`.
+            query (Tensor):
+                Input query with shape `(num_queries, bs, embed_dims)`.
+            key (Tensor):
+                The key tensor with shape `(num_keys, bs, embed_dims)`.
+            value (Tensor):
+                The value tensor with shape `(num_keys, bs, embed_dims)`.
+            query_pos (Tensor):
+                The positional encoding for `query`.
                 Default: None.
-            key_pos (Tensor): The positional encoding for `key`.
+            key_pos (Tensor):
+                The positional encoding for `key`.
                 Default: None.
-            attn_masks (List[Tensor], optional): Each element is 2D Tensor
-                which is used in calculation of corresponding attention in
-                operation_order. Default: None.
-            query_key_padding_mask (Tensor): ByteTensor for `query`, with
-                shape [bs, num_queries]. Only used in self-attention
+            attn_masks (List[Tensor], optional):
+                Each element is 2D Tensor which is used in calculation
+                of corresponding attention in operation_order.
                 Default: None.
-            key_padding_mask (Tensor): ByteTensor for `query`, with
-                shape [bs, num_keys]. Default: None.
+            query_key_padding_mask (Tensor):
+                ByteTensor for `query`,
+                with shape [bs, num_queries]. Only used in self-attention
+                Default: None.
+            key_padding_mask (Tensor):
+                ByteTensor for `query`, with
+                shape `[bs, num_keys]`.
+                Default: None.
 
         Returns:
-            Tensor:  results with shape [num_queries, bs, embed_dims].
+            Tensor: Results with shape `[num_queries, bs, embed_dims]`.
         """
         for layer in self.layers:
             query = layer(

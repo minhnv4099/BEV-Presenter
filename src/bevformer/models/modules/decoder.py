@@ -3,7 +3,7 @@
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
 import warnings
-import math
+import copy
 import torch
 from torch import Tensor
 from typing import Optional, Sequence
@@ -11,7 +11,7 @@ from typing import Optional, Sequence
 from src.typing import ConfigType
 from src.bevformer.transformers.layers import TransformerLayerSequence
 from src.bevformer.models.modules.base_transformer_layer_v2 import CustomBaseTransformerLayer
-from src.registry import TRANSFORMER_BLOCKS
+from src.registry import TRANSFORMER_BLOCKS, TRANSFORMER_LAYERS
 from src.utils.logging import getLogger
 
 logger = getLogger(__name__)
@@ -45,17 +45,29 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
     """
 
     def __init__(self, *args, return_intermediate: bool = False, **kwargs):
-        super(DetectionTransformerDecoder, self).__init__(*args, **kwargs)
-        self.return_intermediate = return_intermediate
-        self.fp16_enabled = False
+        self.completed = True
+        try:
+            super(DetectionTransformerDecoder, self).__init__(*args, **kwargs)
+            self.return_intermediate = return_intermediate
+            self.fp16_enabled = False
+        except Exception as e:
+            raise e
+            self.completed = False
 
     def forward(
         self,
         query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        query_pos: Optional[Tensor],
+        key_pos,
+        attention_mask,
+        attn_mask,
+        head_mask,
         *args,
-        reference_points: Optional[Tensor] = None,
-        reg_branches: Optional[Tensor] = None,
-        key_padding_mask: Optional[Tensor] = None,
+        reference_points=None,
+        reg_branches=None,
+        key_padding_mask=None,
         **kwargs
     ):
         """Forward function for `Detr3DTransformerDecoder`.
@@ -65,7 +77,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
             reference_points (Tensor): The reference
                 points of offset. has shape
                 (bs, num_query, 4) when as_two_stage,
-                otherwise has shape ((bs, num_query, 2).
+                otherwise has shape (bs, num_query, 2).
             reg_branches: (obj:`nn.ModuleList`): Used for
                 refining the regression results. Only would
                 be passed when with_box_refine is True,
@@ -79,9 +91,8 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
         intermediate: list[Tensor] = []
         intermediate_reference_points: list[Tensor] = []
         for lid, layer in enumerate(self.layers):
-
             reference_points_input = reference_points[..., :2].unsqueeze(
-                2)  # BS NUM_QUERY NUM_LEVEL 2
+                2)  # (bs, num_query, num_level, 2)
             output = layer(
                 output,
                 *args,
@@ -118,6 +129,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
         return output, reference_points
 
 
+@TRANSFORMER_LAYERS.register_module()
 class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
     """Implements decoder layer in DETR transformer.
 
@@ -149,8 +161,10 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
         ),
         norm_cfg: ConfigType = dict(type='LN'),
         act_cfg=dict(type='ReLU', inplace=True),
-        init_cfg: ConfigType = None,
         operation_order: Optional[Sequence[str]] = None,
+        feedforward_channels: int = 1024,
+        ffn_dropout: float = 0.0,
+        ffn_num_fcs: int = 2,
         **kwargs
     ):
         CustomBaseTransformerLayer.__init__(
@@ -160,6 +174,9 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
             norm_cfg=norm_cfg,
             operation_order=operation_order,
             act_cfg=act_cfg,
+            # feedforward_channels=feedforward_channels,
+            # ffn_dropout=ffn_dropout,
+            # ffn_num_fcs=ffn_num_fcs,
             **kwargs
         )
 
@@ -174,6 +191,8 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                 value: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None,
                 key_pos: Optional[Tensor] = None,
+                *,
+                attn_masks: Optional[Tensor] = None,
                 self_attn_mask: Optional[Tensor] = None,
                 cross_attn_mask: Optional[Tensor] = None,
                 key_padding_mask: Optional[Tensor] = None,
@@ -207,27 +226,66 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
         Returns:
             Tensor: forwarded results, has shape (bs, num_queries, dim).
         """
+        norm_index = 0
+        attn_index = 0
+        ffn_index = 0
+        identity = query
+        if attn_masks is None:
+            attn_masks = [None for _ in range(self.num_attn)]
+        elif isinstance(attn_masks, torch.Tensor):
+            attn_masks = [
+                copy.deepcopy(attn_masks) for _ in range(self.num_attn)
+            ]
+            warnings.warn(f'Use same attn_mask in all attentions in '
+                          f'{self.__class__.__name__} ')
+        else:
+            assert len(attn_masks) == self.num_attn, \
+                f'The length of attn_masks {len(attn_masks)} must be equal ' \
+                f'to the number of attention in ' \
+                f'operation_order {self.num_attn}'
 
-        query = self.self_attn(
-            query=query,
-            key=query,
-            value=query,
-            query_pos=query_pos,
-            key_pos=query_pos,
-            attn_mask=self_attn_mask,
-            **kwargs)
-        query = self.norms[0](query)
-        query = self.cross_attn(
-            query=query,
-            key=key,
-            value=value,
-            query_pos=query_pos,
-            key_pos=key_pos,
-            attn_mask=cross_attn_mask,
-            key_padding_mask=key_padding_mask,
-            **kwargs)
-        query = self.norms[1](query)
-        query = self.ffn(query)
-        query = self.norms[2](query)
+        for operation in self.operation_order:
+            if operation == 'self_attn':
+                query = self.attentions[attn_index](
+                    query,
+                    query,
+                    query,
+                    query_pos,
+                    key_pos,
+                    identity if self.pre_norm else None,
+                    attn_mask=attn_masks[attn_index],
+                )
+                attn_index += 1
+                identity = query
 
-        return query
+            elif operation == 'norm':
+                query = self.norms[norm_index](query)
+                norm_index += 1
+
+            # spaital cross attention
+            elif operation == 'cross_attn':
+                query = self.attentions[attn_index](
+                    query,
+                    key,
+                    value,
+                    identity if self.pre_norm else None,
+                    query_pos=query_pos,
+                    key_pos=key_pos,
+                    reference_points=ref_3d,
+                    reference_points_cam=reference_points_cam,
+                    mask=mask,
+                    attn_mask=attn_masks[attn_index],
+                    key_padding_mask=key_padding_mask,
+                    spatial_shapes=spatial_shapes,
+                    level_start_index=level_start_index,
+                    **kwargs)
+                attn_index += 1
+                identity = query
+
+            elif operation == 'ffn':
+                query = self.ffns[ffn_index](
+                    query, identity if self.pre_norm else None)
+                ffn_index += 1
+
+            return query
+

@@ -19,7 +19,7 @@ from mmengine.model import BaseModule
 
 from src.utils.telemetry import timing
 from ...activations import ACT2FN
-from src.registry import MODELS
+from src.registry import MODELS, BACKBONES
 from src.utils.logging import getLogger
 from src.modeling_output import (
     BaseModelOutputWithNoAttention,
@@ -418,12 +418,14 @@ class ResNetForImageClassification(ResNetPreTrainedModel):
     """
 )
 @MODELS.register_module()
-class ResNetBackbone(ResNetPreTrainedModel):
+@BACKBONES.register_module()
+class ResNet(ResNetPreTrainedModel):
     has_attentions = False
 
-    def __init__(self, config: ResNetConfig):
+    def __init__(self, config: ResNetConfig = None):
         ResNetPreTrainedModel.__init__(self, init_cfg=None)
 
+        config = config or ResNetConfig()
         self.config = config
         self.num_features = [config.embedding_size] + config.hidden_sizes
         self.embedder = ResNetEmbeddings(config)
@@ -491,4 +493,4 @@ class ResNetBackbone(ResNetPreTrainedModel):
         )
 
 
-__all__ = ["ResNetEncoder", "ResNetModel", "ResNetPreTrainedModel", "ResNetForImageClassification", "ResNetBackbone"]
+__all__ = ["ResNetEncoder", "ResNetModel", "ResNetPreTrainedModel", "ResNetForImageClassification", "ResNet"]

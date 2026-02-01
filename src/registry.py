@@ -1,35 +1,31 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-"""MMDetection3D provides 17 registry nodes to support using modules across
-projects. Each node is a child of the root registry in MMEngine.
+"""MMENGINEection3D provides 17 registry nodes to support using modules across
+projects. Each node is a child of the root registry in mmengine.
 
 More details can be found at
 https://mmengine.readthedocs.io/en/latest/tutorials/registry.html.
 """
-
 from mmengine.registry import DATA_SAMPLERS as MMENGINE_DATA_SAMPLERS
 from mmengine.registry import DATASETS as MMENGINE_DATASETS
 from mmengine.registry import EVALUATOR as MMENGINE_EVALUATOR
 from mmengine.registry import HOOKS as MMENGINE_HOOKS
-from mmengine.registry import INFERENCERS as MMENGINE_INFERENCERS
+# from mmengine.registry import INFERENCERS as MMENGINE_INFERENCERS
 from mmengine.registry import LOG_PROCESSORS as MMENGINE_LOG_PROCESSORS
 from mmengine.registry import LOOPS as MMENGINE_LOOPS
 from mmengine.registry import METRICS as MMENGINE_METRICS
 from mmengine.registry import MODEL_WRAPPERS as MMENGINE_MODEL_WRAPPERS
 from mmengine.registry import MODELS as MMENGINE_MODELS
-from mmengine.registry import \
-    OPTIM_WRAPPER_CONSTRUCTORS as MMENGINE_OPTIM_WRAPPER_CONSTRUCTORS
+from mmengine.registry import OPTIM_WRAPPER_CONSTRUCTORS as MMENGINE_OPTIM_WRAPPER_CONSTRUCTORS
 from mmengine.registry import OPTIM_WRAPPERS as MMENGINE_OPTIM_WRAPPERS
 from mmengine.registry import OPTIMIZERS as MMENGINE_OPTIMIZERS
 from mmengine.registry import PARAM_SCHEDULERS as MMENGINE_PARAM_SCHEDULERS
-from mmengine.registry import \
-    RUNNER_CONSTRUCTORS as MMENGINE_RUNNER_CONSTRUCTORS
+from mmengine.registry import RUNNER_CONSTRUCTORS as MMENGINE_RUNNER_CONSTRUCTORS
 from mmengine.registry import RUNNERS as MMENGINE_RUNNERS
 from mmengine.registry import TASK_UTILS as MMENGINE_TASK_UTILS
 from mmengine.registry import TRANSFORMS as MMENGINE_TRANSFORMS
 from mmengine.registry import VISBACKENDS as MMENGINE_VISBACKENDS
 from mmengine.registry import VISUALIZERS as MMENGINE_VISUALIZERS
-from mmengine.registry import \
-    WEIGHT_INITIALIZERS as MMENGINE_WEIGHT_INITIALIZERS
+from mmengine.registry import WEIGHT_INITIALIZERS as MMENGINE_WEIGHT_INITIALIZERS
 from mmengine.registry import Registry, build_from_cfg
 
 
@@ -86,25 +82,49 @@ WEIGHT_INITIALIZERS = Registry(
     parent=MMENGINE_WEIGHT_INITIALIZERS,
     locations=[f'{PACKAGE}.models'])
 
-# manage all kinds of transformer layer
+# manage all kinds of transformer components
 ATTENTIONS = Registry(
-    'attention',
-    scope='attention',
-    parent=MODELS,
-    locations=[f'{PACKAGE}.models']
-)
+    'attention', scope='attention', parent=MODELS, locations=[f'{PACKAGE}.models'])
+POSITION_ENCODINGS = Registry(
+    'position_encoding', scope='position_encoding', parent=MODELS,
+    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.layers'])
 TRANSFORMER_LAYERS = Registry(
-    "transformer_layer",
-    scope="transformer_layer",
-    parent=MODELS,
-    locations=[f'{PACKAGE}.models'],
-)
+    "transformer_layer", scope="transformer_layer", parent=MODELS, locations=[f'{PACKAGE}.models'])
 TRANSFORMER_BLOCKS = Registry(
-    "transformer_block",
-    scope="transformer_block",
-    parent=MODELS,
-    locations=[f'{PACKAGE}.models']
-)
+    "transformer_block", scope="transformer_block", parent=MODELS, locations=[f'{PACKAGE}.models'])
+TRANSFORMERS = Registry(
+    "transformer", scope="transformer", parent=MODELS, locations=[f'{PACKAGE}.models'])
+
+
+BACKBONES = Registry(
+    "backbone", scope="backbone", parent=MODELS,
+    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.backbones'])
+NECKS = Registry(
+    "neck", scope="neck", parent=MODELS,
+    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.necks'])
+# manage all kinds of heads
+HEADS = Registry(
+    "head", scope="head", parent=MODELS, locations=[f'{PACKAGE}.models'])
+DETECTORS = Registry(
+    "detector", scope="detector", parent=MODELS,
+    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.detectors'])
+
+# manage task-specific modules like anchor generators and box coders
+TASK_UTILS = Registry(
+    'task util', parent=MMENGINE_TASK_UTILS, locations=[f'{PACKAGE}.models'])
+BBOX_CODERS = Registry(
+    "bbox_coder", scope="bbox_coder", parent=TASK_UTILS,
+    locations=[f'{PACKAGE}.core.bbox'])
+MATCH_COST = Registry(
+    "match_cost", scope="match_cost", parent=TASK_UTILS,
+    locations=[f'{PACKAGE}.core.bbox'])
+ASSIGNERS = Registry(
+    "assigner", scope="assigner", parent=TASK_UTILS,
+    locations=[f'{PACKAGE}.core.bbox'])
+
+LOSSES = Registry(
+    "loss", scope="loss", parent=MODELS,
+    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.losses'])
 
 # mangage all kinds of optimizers like `SGD` and `Adam`
 OPTIMIZERS = Registry(
@@ -137,10 +157,6 @@ METRICS = Registry(
 EVALUATOR = Registry(
     'evaluator', parent=MMENGINE_EVALUATOR, locations=[f'{PACKAGE}.evaluation'])
 
-# manage task-specific modules like anchor generators and box coders
-TASK_UTILS = Registry(
-    'task util', parent=MMENGINE_TASK_UTILS, locations=[f'{PACKAGE}.models'])
-
 # manage visualizer
 VISUALIZERS = Registry(
     'visualizer',
@@ -160,7 +176,7 @@ LOG_PROCESSORS = Registry(
     locations=[f'{PACKAGE}.engine'])
 
 # manage inferencer
-INFERENCERS = Registry(
-    'inferencer',
-    parent=MMENGINE_INFERENCERS,
-    locations=[f'{PACKAGE}.api.inferencers'])
+# INFERENCERS = Registry(
+#     'inferencer',
+#     parent=MMENGINE_INFERENCERS,
+#     locations=[f'{PACKAGE}.api.inferencers'])
