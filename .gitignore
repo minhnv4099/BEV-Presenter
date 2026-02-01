@@ -10,9 +10,8 @@ __pycache__/
 .Python
 build/
 ckpts/
-data/
 ckpts
-data
+/data
 test/
 val/
 work_dirs/
@@ -34,6 +33,16 @@ share/python-wheels/
 *.egg
 MANIFEST
 /.idea
+
+data/nuscenes/can_bus
+data/nuscenes/v1.0-mini
+
+# exclude
+!/data/**/.json
+!/data/**/.plk
+# submodules
+mmcv_clone/
+
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

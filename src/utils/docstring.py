@@ -19,3 +19,10 @@ def auto_docstring(custom_intro: Optional[str] = ''):
         return docstring_adder(custom_intro)
 
     return docstring_adder
+
+
+def add_note(note: Optional[str] = ''):
+    def docstring_adder(symbol):
+        return symbol
+
+    return docstring_adder
