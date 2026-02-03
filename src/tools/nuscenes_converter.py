@@ -11,17 +11,16 @@ from collections import OrderedDict
 
 from pyquaternion import Quaternion
 from shapely.geometry import MultiPoint, box
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Sequence
 
 from mmengine.utils import check_file_exist, track_iter_progress
 from mmengine.fileio import dump, load
-from nuscenes.nuscenes import NuScenes
 from nuscenes.utils import splits
 from nuscenes.utils.geometry_utils import view_points
 
-# from mmdet3d.datasets.nuscenes_dataset import NuScenesDataset
-from src.data.can_bus_api import NuScenesCanBus
-from src.data.nuscenes import NuScenesDataset
+from src.data_apis import NuScenesCanBus
+from src.data_apis import CustomNuScenes as NuScenes
+from src.datasets.nuscenes_dataset import CustomNuScenesDataset
 from src.structures.bbox_3d import points_cam2img
 from src.utils.logging import getLogger
 
@@ -37,26 +36,28 @@ nus_attributes = ('cycle.with_rider', 'cycle.without_rider',
 logger = getLogger(__name__)
 
 
-def create_nuscenes_infos(root_path,
-                          out_path,
-                          can_bus_root_path,
-                          info_prefix,
-                          version='v1.0-trainval',
-                          max_sweeps=10):
+def create_nuscenes_infos(root_path: str,
+                          out_path: str,
+                          can_bus_root_path: str,
+                          info_prefix: str,
+                          version: str = 'v1.0-trainval',
+                          max_sweeps: int = 10):
     """Create info file of nuscene dataset.
 
-    Given the raw data, generate its related info file in pkl format.
+    Given the raw data, generate its related info file in .pkl format.
 
     Args:
         root_path (str): Path of the data root.
+        can_bus_root_path (str): Path to can bus folder.
+        out_path (str): Location to save .plk files.
         info_prefix (str): Prefix of the info file to be generated.
         version (str): Version of the data.
             Default: 'v1.0-trainval'
         max_sweeps (int): Max number of sweeps.
             Default: 10
     """
-    logger.info(f"{version}{root_path}")
-    nusc = NuScenes(version=version, dataroot=root_path, verbose=True)
+    logger.info(f"{root_path}, {version}")
+    nusc = NuScenes(version=version, dataroot=root_path, verbose=True, save_reverse=True)
     nusc_can_bus = NuScenesCanBus(dataroot=can_bus_root_path)
 
     available_vers = ['v1.0-trainval', 'v1.0-test', 'v1.0-mini']
@@ -77,8 +78,10 @@ def create_nuscenes_infos(root_path,
     available_scenes = get_available_scenes(nusc)
     available_scene_names = [s['name'] for s in available_scenes]
 
+    # name
     train_scenes = list(filter(lambda x: x in available_scene_names, train_scenes))
     val_scenes = list(filter(lambda x: x in available_scene_names, val_scenes))
+    # scene
     train_scenes = set([
         available_scenes[available_scene_names.index(s)]['token']
         for s in train_scenes
@@ -92,28 +95,39 @@ def create_nuscenes_infos(root_path,
     if test:
         print('test scene: {}'.format(len(train_scenes)))
     else:
-        print('train scene: {}, val scene: {}'.format(
+        logger.info('train scene: {}, val scene: {}'.format(
             len(train_scenes), len(val_scenes)))
 
     train_nusc_infos, val_nusc_infos = _fill_trainval_infos(
         nusc, nusc_can_bus, train_scenes, val_scenes, test, max_sweeps=max_sweeps)
 
     metadata = dict(version=version)
+    out_path = out_path or root_path
     if test:
-        print('test sample: {}'.format(len(train_nusc_infos)))
+        logger.info('test sample: {}'.format(len(train_nusc_infos)))
         data = dict(infos=train_nusc_infos, metadata=metadata)
         info_path = osp.join(out_path, '{}_infos_temporal_test.pkl'.format(info_prefix))
+        logger.info(f"Save test data infos in {info_path!r}.")
         dump(data, info_path)
+        info_path = info_path.replace('pkl', 'json')
+        dump(data, info_path)
+        logger.info(f"Save test data infos in {info_path!r}.")
     else:
-        print('train sample: {}, val sample: {}'.format(len(train_nusc_infos), len(val_nusc_infos)))
+        logger.info('train sample: {}, val sample: {}'.format(len(train_nusc_infos), len(val_nusc_infos)))
 
         data = dict(infos=train_nusc_infos, metadata=metadata)
-        info_path = osp.join(out_path, '{}_infos_temporal_train.pkl'.format(info_prefix))
-        dump(data, info_path)
+        info_train_path = osp.join(out_path, '{}_infos_temporal_train.pkl'.format(info_prefix))
+        dump(data, info_train_path)
+        info_train_path = info_train_path.replace('pkl', 'json')
+        dump(data, info_train_path, indent=3)
+        logger.info(f"Save train data infos in {info_train_path!r}.")
 
-        data['infos'] = val_nusc_infos
+        data = dict(infos=val_nusc_infos, metadata=metadata)
         info_val_path = osp.join(out_path, '{}_infos_temporal_val.pkl'.format(info_prefix))
         dump(data, info_val_path)
+        info_val_path = info_val_path.replace('pkl', 'json')
+        dump(data, info_val_path, indent=3)
+        logger.info(f"Save val data infos in {info_val_path!r}.")
 
 
 def get_available_scenes(nusc: NuScenes):
@@ -130,70 +144,40 @@ def get_available_scenes(nusc: NuScenes):
             available scenes.
     """
     available_scenes = []
-    print('total scene num: {}'.format(len(nusc.scene)))
+    logger.info('total scene num: {}'.format(len(nusc.scene)))
     for scene in nusc.scene:
-        scene_token = scene['token']
-        scene_rec = nusc.get('scene', scene_token)
-        sample_rec = nusc.get('sample', scene_rec['first_sample_token'])
+        # scene_token = scene['token']
+        # scene_rec = nusc.get('scene', scene_token)
+        sample_rec = nusc.get('sample', scene['first_sample_token'])
         sd_rec = nusc.get('sample_data', sample_rec['data']['LIDAR_TOP'])
-        has_more_frames = True
-        scene_not_exist = False
-        while has_more_frames:
-            lidar_path, boxes, _ = nusc.get_sample_data(sd_rec['token'])
-            lidar_path = str(lidar_path)
-            if os.getcwd() in lidar_path:
+        # has_more_frames = True
+        # scene_not_exist = False
+        # while has_more_frames:
+        lidar_path, boxes, _ = nusc.get_sample_data(sd_rec['token'])
+        lidar_path = str(lidar_path)
+        # if os.getcwd() in lidar_path:
                 # path from lyftdataset is absolute path
-                lidar_path = lidar_path.split(f'{os.getcwd()}/')[-1]
+            # lidar_path = lidar_path.split(f'{os.getcwd()}/')[-1]
                 # relative path
-            if not osp.isfile(lidar_path):
-                scene_not_exist = True
-                break
-            else:
-                break
-        if scene_not_exist:
+        if not osp.isfile(lidar_path):
             continue
         available_scenes.append(scene)
-    print('exist scene num: {}'.format(len(available_scenes)))
+    logger.info('exist scene num: {}'.format(len(available_scenes)))
     return available_scenes
 
 
-def _get_can_bus_info(nusc, nusc_can_bus, sample):
-    scene_name = nusc.get('scene', sample['scene_token'])['name']
-    sample_timestamp = sample['timestamp']
-    try:
-        pose_list = nusc_can_bus.get_messages(scene_name, 'pose')
-    except:
-        return np.zeros(18)  # server scenes do not have can bus information.
-    can_bus = []
-    # during each scene, the first timestamp of can_bus may be large than the first sample's timestamp
-    last_pose = pose_list[0]
-    for i, pose in enumerate(pose_list):
-        if pose['utime'] > sample_timestamp:
-            break
-        last_pose = pose
-    _ = last_pose.pop('utime')  # useless
-    pos = last_pose.pop('pos')
-    rotation = last_pose.pop('orientation')
-    can_bus.extend(pos)
-    can_bus.extend(rotation)
-    for key in last_pose.keys():
-        can_bus.extend(pose[key])  # 16 elements
-    can_bus.extend([0., 0.])
-    return np.array(can_bus)
-
-
-def _fill_trainval_infos(nusc,
-                         nusc_can_bus,
-                         train_scenes,
-                         val_scenes,
+def _fill_trainval_infos(nusc: NuScenes,
+                         nusc_can_bus: NuScenesCanBus,
+                         train_scenes_name: Sequence[str],
+                         val_scenes_name: Sequence[str],
                          test=False,
                          max_sweeps=10):
     """Generate the train/val infos from the raw data.
 
     Args:
         nusc (:obj:`NuScenes`): Dataset class in the nuScenes dataset.
-        train_scenes (list[str]): Basic information of training scenes.
-        val_scenes (list[str]): Basic information of validation scenes.
+        train_scenes_name (list[str]): Basic information of training scenes.
+        val_scenes_name (list[str]): Basic information of validation scenes.
         test (bool): Whether use the test mode. In the test mode, no
             annotations can be accessed. Default: False.
         max_sweeps (int): Max number of sweeps. Default: 10.
@@ -208,8 +192,7 @@ def _fill_trainval_infos(nusc,
     for sample in track_iter_progress(nusc.sample):
         lidar_token = sample['data']['LIDAR_TOP']
         sd_rec = nusc.get('sample_data', sample['data']['LIDAR_TOP'])
-        cs_record = nusc.get('calibrated_sensor',
-                             sd_rec['calibrated_sensor_token'])
+        cs_record = nusc.get('calibrated_sensor', sd_rec['calibrated_sensor_token'])
         pose_record = nusc.get('ego_pose', sd_rec['ego_pose_token'])
         lidar_path, boxes, _ = nusc.get_sample_data(lidar_token)
 
@@ -257,8 +240,7 @@ def _fill_trainval_infos(nusc,
         for cam in camera_types:
             cam_token = sample['data'][cam]
             cam_path, _, cam_intrinsic = nusc.get_sample_data(cam_token)
-            cam_info = obtain_sensor2top(nusc, cam_token, l2e_t, l2e_r_mat,
-                                         e2g_t, e2g_r_mat, cam)
+            cam_info = obtain_sensor2top(nusc, cam_token, l2e_t, l2e_r_mat, e2g_t, e2g_r_mat, cam)
             cam_info.update(cam_intrinsic=cam_intrinsic)
             info['cams'].update({cam: cam_info})
 
@@ -266,9 +248,8 @@ def _fill_trainval_infos(nusc,
         sd_rec = nusc.get('sample_data', sample['data']['LIDAR_TOP'])
         sweeps = []
         while len(sweeps) < max_sweeps:
-            if not sd_rec['prev'] == '':
-                sweep = obtain_sensor2top(nusc, sd_rec['prev'], l2e_t,
-                                          l2e_r_mat, e2g_t, e2g_r_mat, 'lidar')
+            if sd_rec['prev'] != '':
+                sweep = obtain_sensor2top(nusc, sd_rec['prev'], l2e_t, l2e_r_mat, e2g_t, e2g_r_mat, 'lidar')
                 sweeps.append(sweep)
                 sd_rec = nusc.get('sample_data', sd_rec['prev'])
             else:
@@ -299,13 +280,13 @@ def _fill_trainval_infos(nusc,
 
             names = [b.name for b in boxes]
             for i in range(len(names)):
-                if names[i] in NuScenesDataset.NameMapping:
-                    names[i] = NuScenesDataset.NameMapping[names[i]]
+                if names[i] in CustomNuScenesDataset.NameMapping:
+                    names[i] = CustomNuScenesDataset.NameMapping[names[i]]
             names = np.array(names)
             # we need to convert rot to SECOND format.
             gt_boxes = np.concatenate([locs, dims, -rots - np.pi / 2], axis=1)
-            assert len(gt_boxes) == len(
-                annotations), f'{len(gt_boxes)}, {len(annotations)}'
+            assert len(gt_boxes) == len(annotations), \
+                f'{len(gt_boxes)}, {len(annotations)}'
             info['gt_boxes'] = gt_boxes
             info['gt_names'] = names
             info['gt_velocity'] = velocity.reshape(-1, 2)
@@ -315,12 +296,37 @@ def _fill_trainval_infos(nusc,
                 [a['num_radar_pts'] for a in annotations])
             info['valid_flag'] = valid_flag
 
-        if sample['scene_token'] in train_scenes:
+        if sample['scene_token'] in train_scenes_name:
             train_nusc_infos.append(info)
         else:
             val_nusc_infos.append(info)
 
     return train_nusc_infos, val_nusc_infos
+
+
+def _get_can_bus_info(nusc, nusc_can_bus, sample):
+    scene_name = nusc.get('scene', sample['scene_token'])['name']
+    sample_timestamp = sample['timestamp']
+    try:
+        pose_list = nusc_can_bus.get_messages(scene_name, 'pose')
+    except:
+        return np.zeros(18)  # server scenes do not have can bus information.
+    can_bus = []
+    # during each scene, the first timestamp of can_bus may be large than the first sample's timestamp
+    last_pose = pose_list[0]
+    for i, pose in enumerate(pose_list):
+        if pose['utime'] > sample_timestamp:
+            break
+        last_pose = pose
+    _ = last_pose.pop('utime')  # useless
+    pos = last_pose.pop('pos')
+    rotation = last_pose.pop('orientation')
+    can_bus.extend(pos)
+    can_bus.extend(rotation)
+    for key in last_pose.keys():
+        can_bus.extend(pose[key])  # 16 elements
+    can_bus.extend([0., 0.])
+    return np.array(can_bus)
 
 
 def obtain_sensor2top(nusc,
@@ -446,7 +452,7 @@ def export_2d_annotation(root_path, info_path, version, mono3d=True):
         json_prefix = f'{info_path[:-4]}_mono3d'
     else:
         json_prefix = f'{info_path[:-4]}'
-    dump(coco_2d_dict, f'{json_prefix}.coco.json', indent=2)
+    dump(coco_2d_dict, f'{json_prefix}.coco.json', indent=3)
 
 
 def get_2d_boxes(nusc,
@@ -667,9 +673,9 @@ def generate_record(ann_rec: dict, x1: float, y1: float, x2: float, y2: float,
     coco_rec['image_id'] = sample_data_token
     coco_rec['area'] = (y2 - y1) * (x2 - x1)
 
-    if repro_rec['category_name'] not in NuScenesDataset.NameMapping:
+    if repro_rec['category_name'] not in CustomNuScenesDataset.NameMapping:
         return None
-    cat_name = NuScenesDataset.NameMapping[repro_rec['category_name']]
+    cat_name = CustomNuScenesDataset.NameMapping[repro_rec['category_name']]
     coco_rec['category_name'] = cat_name
     coco_rec['category_id'] = nus_categories.index(cat_name)
     coco_rec['bbox'] = [x1, y1, x2 - x1, y2 - y1]

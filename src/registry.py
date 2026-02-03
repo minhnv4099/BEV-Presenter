@@ -28,7 +28,6 @@ from mmengine.registry import VISUALIZERS as MMENGINE_VISUALIZERS
 from mmengine.registry import WEIGHT_INITIALIZERS as MMENGINE_WEIGHT_INITIALIZERS
 from mmengine.registry import Registry, build_from_cfg
 
-
 PACKAGE = 'src.bevformer'
 
 # manage all kinds of runners like `EpochBasedRunner` and `IterBasedRunner`
@@ -55,16 +54,17 @@ HOOKS = Registry(
 
 # manage data-related modules
 DATASETS = Registry(
-    'dataset', parent=MMENGINE_DATASETS, locations=[f'{PACKAGE}.datasets'])
+    'dataset', parent=MMENGINE_DATASETS, locations=[f'src.datasets'])
 DATA_SAMPLERS = Registry(
-    'data sampler',
-    parent=MMENGINE_DATA_SAMPLERS,
+    'data sampler', parent=MMENGINE_DATA_SAMPLERS,
     # TODO: update the location when {PACKAGE} has its own data sampler
     locations=[f'{PACKAGE}.datasets'])
 TRANSFORMS = Registry(
-    'transform',
-    parent=MMENGINE_TRANSFORMS,
-    locations=[f'{PACKAGE}.datasets.transforms'])
+    'transform', parent=MMENGINE_TRANSFORMS,
+    locations=["src.datasets.transforms"])
+PIPELINES = Registry(
+    "pipeline", scope="pipeline", parent=None,
+    locations=["src.datasets.pipelines"])
 
 CONFIGS = Registry(
     'config', build_from_cfg, locations=[f'{PACKAGE}.models'])
@@ -95,13 +95,13 @@ TRANSFORMER_BLOCKS = Registry(
 TRANSFORMERS = Registry(
     "transformer", scope="transformer", parent=MODELS, locations=[f'{PACKAGE}.models'])
 
-
 BACKBONES = Registry(
     "backbone", scope="backbone", parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.backbones'])
 NECKS = Registry(
     "neck", scope="neck", parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.necks'])
+
 # manage all kinds of heads
 HEADS = Registry(
     "head", scope="head", parent=MODELS, locations=[f'{PACKAGE}.models'])
@@ -121,7 +121,6 @@ MATCH_COST = Registry(
 ASSIGNERS = Registry(
     "assigner", scope="assigner", parent=TASK_UTILS,
     locations=[f'{PACKAGE}.core.bbox'])
-
 LOSSES = Registry(
     "loss", scope="loss", parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.losses'])

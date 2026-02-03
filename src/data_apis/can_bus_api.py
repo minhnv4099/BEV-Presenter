@@ -28,7 +28,7 @@ class NuScenesCanBus:
         :param max_misalignment: Maximum distance in m that any pose is allowed to be away from the route.
         """
         # Check that folder exists.
-        if dataroot.endswith("can_bus"):
+        if dataroot.endswith("can_bus") or dataroot.endswith("can_bus/"):
             self.can_dir = dataroot
         else:
             self.can_dir = os.path.join(dataroot, 'can_bus')
