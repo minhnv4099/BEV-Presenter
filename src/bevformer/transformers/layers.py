@@ -5,10 +5,11 @@
 import warnings
 import copy
 import torch
+from torch import Tensor
 from typing import Optional
 
 from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
-from src.typing import ConfigType, OptionalTensor, Tensor
+from src.typing import ConfigType
 from mmengine.model import BaseModule, ModuleList
 from mmengine.config import ConfigDict
 

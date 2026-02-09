@@ -11,7 +11,10 @@
 # multi-scale feautres -> single scale features (C5)
 
 img_norm_cfg = dict(
-    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
+    mean=[123.675, 116.28, 103.53],
+    std=[58.395, 57.12, 57.375],
+    to_rgb=True
+)
 
 point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 voxel_size = [0.2, 0.2, 8]
@@ -40,7 +43,7 @@ queue_length = 3
 
 encoder = dict(
     type='BEVFormerEncoder',
-    num_layers=3,
+    num_layers=2,
     pc_range=point_cloud_range,
     num_points_in_pillar=8,
     return_intermediate=False,
@@ -65,7 +68,6 @@ encoder = dict(
         ],
         ffn_cfgs=dict(
             type="FFN",
-            # config=None,
             feedforward_channels=_ffn_dim_,
             ffn_drop=0.1,
             num_fcs=2,
@@ -76,25 +78,24 @@ encoder = dict(
 
 decoder = dict(
     type='DetectionTransformerDecoder',
-    num_layers=6,
+    num_layers=2,
     return_intermediate=True,
     transformerlayers=dict(
         type='DetrTransformerDecoderLayer',
         attn_cfgs=[
             dict(
-                type='BaseAttention',
+                type='CustomMSDeformableAttention',
                 embed_dims=_dim_,
-                num_heads=8,
-                dropout=0.1),
+                num_levels=1,
+            ),
             dict(
                 type='CustomMSDeformableAttention',
                 embed_dims=_dim_,
-                num_levels=1
+                num_levels=1,
             )
         ],
         ffn_cfgs=dict(
             type="FFN",
-            # config=None,
             feedforward_channels=_ffn_dim_,
             ffn_drop=0.1,
             num_fcs=2,
@@ -154,59 +155,57 @@ model = dict(
     pretrained=dict(img='torchvision://resnet50'),
     img_backbone=dict(
         type='ResNet',
-        # depth=50,
-        # num_stages=4,
-        # out_indices=(3,),
-        # frozen_stages=1,
-        # norm_cfg=dict(type='BN', requires_grad=False),
-        # norm_eval=True,
-        # style='pytorch'
-    ),
+        depth=50,
+        num_stages=4,
+        out_indices=(3,),
+        frozen_stages=1,
+        norm_cfg=dict(type='BN', requires_grad=False),
+        norm_eval=True,
+        style='pytorch'),
     img_neck=dict(
-        type='BaseDownChannel',
-        in_channels=(512, 1024, 2048),
+        type='FPN',
+        in_channels=[2048],
         out_channels=_dim_,
         start_level=0,
         add_extra_convs='on_output',
         num_outs=_num_levels_,
-        relu_before_extra_convs=True
-    ),
+        relu_before_extra_convs=True),
     pts_bbox_head=pts_bbox_head,
     train_cfg=dict(
-            pts=dict(
-                grid_size=[512, 512, 1],
-                voxel_size=voxel_size,
-                point_cloud_range=point_cloud_range,
-                out_size_factor=4,
-                assigner=dict(
-                    type='HungarianAssigner3D',
-                    cls_cost=dict(type='BBox3DL1Cost', weight=2.0),
-                    reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
-                    iou_cost=dict(type='SmoothL1Cost', weight=0.0),  # Fake cost. This is just to make it compatible with DETR head.
-                    pc_range=point_cloud_range)))
-)
+        pts=dict(
+            grid_size=[512, 512, 1],
+            voxel_size=voxel_size,
+            point_cloud_range=point_cloud_range,
+            out_size_factor=4,
+            assigner=dict(
+                type='HungarianAssigner3D',
+                cls_cost=dict(type='FocalCost', weight=2.0),
+                reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
+                iou_cost=dict(type='SmoothL1Cost', weight=0.0),  # Fake cost. This is just to make it compatible with DETR head.
+                pc_range=point_cloud_range))))
 
 dataset_type = 'CustomNuScenesDataset'
-data_root = 'data/nuscenes/'
+version = "v1.0-mini"
+data_root = f'data/nuscenes/{version}/'
 file_client_args = dict(backend='disk')
 
 train_pipeline = [
-    dict(type='LoadMultiViewImageFromFiles', to_float32=True),
-    dict(type='PhotoMetricDistortionMultiViewImage'),
-    dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
-    dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
-    dict(type='ObjectNameFilter', classes=class_names),
-    dict(type='NormalizeMultiviewImage', **img_norm_cfg),
-    dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),
-    dict(type='PadMultiViewImage', size_divisor=32),
-    dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img'])
+    dict(type='LoadMultiViewImageFromFiles', to_float32=True),  # loading.py
+    dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),  # loading.py
+    # dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),  # transform_3d.py
+    # dict(type='ObjectNameFilter', classes=class_names),  # transform_3d.py
+    dict(type='PhotoMetricDistortionMultiViewImage'),  # transform_3d.py
+    dict(type='NormalizeMultiviewImage', **img_norm_cfg),  # transform_3d.py
+    dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),   # transform_3d.py
+    dict(type='PadMultiViewImage', size_divisor=32),  # transform_3d.py
+    dict(type='CustomDefaultFormatBundle3D', class_names=class_names),  # formating.py
+    dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img']),   # transform_3d.py
+    dict(type='TypeConverter')  # formating.py
 ]
 
 test_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
-
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1600, 900),
@@ -240,16 +239,23 @@ data = dict(
         # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
         # and box_type_3d='Depth' in sunrgbd and scannet dataset.
         box_type_3d='LiDAR'),
-    val=dict(type=dataset_type,
-             data_root=data_root,
-             ann_file=data_root + 'nuscenes_infos_temporal_val.pkl',
-             pipeline=test_pipeline, bev_size=(bev_h_, bev_w_),
-             classes=class_names, modality=input_modality, samples_per_gpu=1),
-    test=dict(type=dataset_type,
-              data_root=data_root,
-              ann_file=data_root + 'nuscenes_infos_temporal_val.pkl',
-              pipeline=test_pipeline, bev_size=(bev_h_, bev_w_),
-              classes=class_names, modality=input_modality),
+    val=dict(
+        type=dataset_type,
+        data_root=data_root,
+        ann_file=data_root + 'nuscenes_infos_temporal_val.pkl',
+        pipeline=test_pipeline,
+        bev_size=(bev_h_, bev_w_),
+        classes=class_names,
+        modality=input_modality,
+        samples_per_gpu=1),
+    test=dict(
+        type=dataset_type,
+        data_root=data_root,
+        ann_file=data_root + 'nuscenes_infos_temporal_val.pkl',
+        pipeline=test_pipeline,
+        bev_size=(bev_h_, bev_w_),
+        classes=class_names,
+        modality=input_modality),
     shuffler_sampler=dict(type='DistributedGroupSampler'),
     nonshuffler_sampler=dict(type='DistributedSampler')
 )

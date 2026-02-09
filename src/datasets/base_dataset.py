@@ -32,8 +32,7 @@ def force_full_init(old_func: Callable) -> Any:
     def wrapper(obj: object, *args, **kwargs):
         # The instance must have `full_init` method.
         if not hasattr(obj, 'full_init'):
-            raise AttributeError(f'{type(obj)} does not have full_init '
-                                 'method.')
+            raise AttributeError(f'{type(obj)} does not have full_init method.')
         # If instance does not have `_fully_initialized` attribute or
         # `_fully_initialized` is False, call `full_init` and set
         # `_fully_initialized` to True
@@ -236,8 +235,7 @@ class BaseDataset(Dataset):
         Several steps to initialize annotation:
 
             - load_data_list: Load annotations from annotation file.
-            - filter data information: Filter annotations according to
-              filter_cfg.
+            - filter data information: Filter annotations according to filter_cfg.
             - slice_data: Slice dataset according to ``self._indices``
             - serialize_data: Serialize ``self.data_list`` if
               ``self.serialize_data`` is True.
@@ -312,44 +310,6 @@ class BaseDataset(Dataset):
 
         return data_list
 
-    @force_full_init
-    def get_data_info(self, idx: int) -> dict:
-        """Get annotation by index and automatically call ``full_init`` if the
-        dataset has not been fully initialized.
-
-        Args:
-            idx (int): The index of data.
-
-        Returns:
-            dict: The idx-th annotation of the dataset.
-        """
-        if self.serialize_data:
-            start_addr = 0 if idx == 0 else self.data_address[idx - 1].item()
-            end_addr = self.data_address[idx].item()
-            bytes = memoryview(
-                self.data_bytes[start_addr:end_addr])  # type: ignore
-            data_info = pickle.loads(bytes)  # type: ignore
-        else:
-            data_info = copy.deepcopy(self.data_list[idx])
-        # Some codebase needs `sample_idx` of data information. Here we convert
-        # the idx to a positive number and save it in data information.
-        if idx >= 0:
-            data_info['sample_idx'] = idx
-        else:
-            data_info['sample_idx'] = len(self) + idx
-
-        return data_info
-
-    @property
-    def metainfo(self) -> dict:
-        """Get meta information of dataset.
-
-        Returns:
-            dict: meta information collected from ``BaseDataset.METAINFO``,
-            annotation file and metainfo argument during instantiation.
-        """
-        return copy.deepcopy(self._metainfo)
-
     def filter_data(self) -> List[dict]:
         """Filter annotations according to filter_cfg. Defaults return all
         ``data_list``.
@@ -362,21 +322,18 @@ class BaseDataset(Dataset):
         """
         return self.data_list
 
-    def get_cat_ids(self, idx: int) -> List[int]:
-        """Get category ids by index. Dataset wrapped by ClassBalancedDataset
-        must implement this method.
-
-        The ``ClassBalancedDataset`` requires a subclass which implements this
-        method.
-
-        Args:
-            idx (int): The index of data.
+    @force_full_init
+    def __len__(self) -> int:
+        """Get the length of filtered dataset and automatically call
+        ``full_init`` if the dataset has not been fully init.
 
         Returns:
-            list[int]: All categories in the image of specified index.
+            int: The length of filtered dataset.
         """
-        raise NotImplementedError(f'{type(self)} must implement `get_cat_ids` '
-                                  'method')
+        if self.serialize_data:
+            return len(self.data_address)
+        else:
+            return len(self.data_list)
 
     def __getitem__(self, idx: int) -> dict:
         """Get the idx-th image and data information of dataset after
@@ -428,6 +385,46 @@ class BaseDataset(Dataset):
         raise Exception(f'Cannot find valid image after {self.max_refetch}! '
                         'Please check your image path and pipeline')
 
+    def prepare_data(self, idx) -> Any:
+        """Get data processed by ``self.pipeline``.
+
+        Args:
+            idx (int): The index of ``data_info``.
+
+        Returns:
+            Any: Depends on ``self.pipeline``.
+        """
+        data_info = self.get_data_info(idx)
+        return self.pipeline(data_info)
+
+    @force_full_init
+    def get_data_info(self, idx: int) -> dict:
+        """Get annotation by index and automatically call ``full_init`` if the
+        dataset has not been fully initialized.
+
+        Args:
+            idx (int): The index of data.
+
+        Returns:
+            dict: The idx-th annotation of the dataset.
+        """
+        if self.serialize_data:
+            start_addr = 0 if idx == 0 else self.data_address[idx - 1].item()
+            end_addr = self.data_address[idx].item()
+            bytes = memoryview(
+                self.data_bytes[start_addr:end_addr])  # type: ignore
+            data_info = pickle.loads(bytes)  # type: ignore
+        else:
+            data_info = copy.deepcopy(self.data_list[idx])
+        # Some codebase needs `sample_idx` of data information. Here we convert
+        # the idx to a positive number and save it in data information.
+        if idx >= 0:
+            data_info['sample_idx'] = idx
+        else:
+            data_info['sample_idx'] = len(self) + idx
+
+        return data_info
+
     def parse_data_info(self, raw_data_info: dict) -> Union[dict, List[dict]]:
         """Parse raw annotation to target format.
 
@@ -449,6 +446,31 @@ class BaseDataset(Dataset):
             raw_data_info[prefix_key] = join_path(prefix,
                                                   raw_data_info[prefix_key])
         return raw_data_info
+
+    @property
+    def metainfo(self) -> dict:
+        """Get meta information of dataset.
+
+        Returns:
+            dict: meta information collected from ``BaseDataset.METAINFO``,
+            annotation file and metainfo argument during instantiation.
+        """
+        return copy.deepcopy(self._metainfo)
+
+    def get_cat_ids(self, idx: int) -> List[int]:
+        """Get category ids by index. Dataset wrapped by ClassBalancedDataset
+        must implement this method.
+
+        The ``ClassBalancedDataset`` requires a subclass which implements this
+        method.
+
+        Args:
+            idx (int): The index of data.
+
+        Returns:
+            list[int]: All categories in the image of specified index.
+        """
+        raise NotImplementedError(f'{type(self)} must implement `get_cat_ids` method')
 
     @classmethod
     def _load_metainfo(cls, metainfo: dict = None) -> dict:
@@ -525,8 +547,7 @@ class BaseDataset(Dataset):
         # Get subset of data from serialized data or data information sequence
         # according to `self.serialize_data`.
         if self.serialize_data:
-            self.data_bytes, self.data_address = \
-                self._get_serialized_subset(indices)
+            self.data_bytes, self.data_address = self._get_serialized_subset(indices)
         else:
             self.data_list = self._get_unserialized_subset(indices)
 
@@ -576,8 +597,7 @@ class BaseDataset(Dataset):
         sub_dataset = self._copy_without_annotation()
         # Get subset of dataset with serialize and unserialized data.
         if self.serialize_data:
-            data_bytes, data_address = \
-                self._get_serialized_subset(indices)
+            data_bytes, data_address = self._get_serialized_subset(indices)
             sub_dataset.data_bytes = data_bytes.copy()
             sub_dataset.data_address = data_address.copy()
         else:
@@ -716,31 +736,6 @@ class BaseDataset(Dataset):
             int: Random index from 0 to ``len(self)-1``
         """
         return np.random.randint(0, len(self))
-
-    def prepare_data(self, idx) -> Any:
-        """Get data processed by ``self.pipeline``.
-
-        Args:
-            idx (int): The index of ``data_info``.
-
-        Returns:
-            Any: Depends on ``self.pipeline``.
-        """
-        data_info = self.get_data_info(idx)
-        return self.pipeline(data_info)
-
-    @force_full_init
-    def __len__(self) -> int:
-        """Get the length of filtered dataset and automatically call
-        ``full_init`` if the  dataset has not been fully init.
-
-        Returns:
-            int: The length of filtered dataset.
-        """
-        if self.serialize_data:
-            return len(self.data_address)
-        else:
-            return len(self.data_list)
 
     def _copy_without_annotation(self, memo=dict()) -> 'BaseDataset':
         """Deepcopy for all attributes other than ``data_list``,

@@ -107,8 +107,8 @@ def create_nuscenes_infos(root_path: str,
         logger.info('test sample: {}'.format(len(train_nusc_infos)))
         data = dict(infos=train_nusc_infos, metadata=metadata)
         info_path = osp.join(out_path, '{}_infos_temporal_test.pkl'.format(info_prefix))
-        logger.info(f"Save test data infos in {info_path!r}.")
         dump(data, info_path)
+        # logger.info(f"Save test data infos in {info_path!r}.")
         info_path = info_path.replace('pkl', 'json')
         dump(data, info_path)
         logger.info(f"Save test data infos in {info_path!r}.")
@@ -153,15 +153,15 @@ def get_available_scenes(nusc: NuScenes):
         # has_more_frames = True
         # scene_not_exist = False
         # while has_more_frames:
-        lidar_path, boxes, _ = nusc.get_sample_data(sd_rec['token'])
+        lidar_path = nusc.get_sample_data_path(sd_rec['token'])
         lidar_path = str(lidar_path)
         # if os.getcwd() in lidar_path:
                 # path from lyftdataset is absolute path
             # lidar_path = lidar_path.split(f'{os.getcwd()}/')[-1]
                 # relative path
-        if not osp.isfile(lidar_path):
-            continue
-        available_scenes.append(scene)
+        if osp.isfile(lidar_path):
+            available_scenes.append(scene)
+
     logger.info('exist scene num: {}'.format(len(available_scenes)))
     return available_scenes
 
@@ -475,9 +475,8 @@ def get_2d_boxes(nusc,
     # Get the sample data and the sample corresponding to that sample data.
     sd_rec = nusc.get('sample_data', sample_data_token)
 
-    assert sd_rec[
-        'sensor_modality'] == 'camera', 'Error: get_2d_boxes only works' \
-        ' for camera sample_data!'
+    assert sd_rec['sensor_modality'] == 'camera', \
+        'Error: get_2d_boxes only works for camera sample_data!'
     if not sd_rec['is_key_frame']:
         raise ValueError(
             'The 2D re-projections are available only for keyframes.')
@@ -491,9 +490,7 @@ def get_2d_boxes(nusc,
     camera_intrinsic = np.array(cs_rec['camera_intrinsic'])
 
     # Get all the annotation with the specified visibilties.
-    ann_recs = [
-        nusc.get('sample_annotation', token) for token in s_rec['anns']
-    ]
+    ann_recs = [nusc.get('sample_annotation', token) for token in s_rec['anns']]
     ann_recs = [
         ann_rec for ann_rec in ann_recs
         if (ann_rec['visibility_token'] in visibilities)

@@ -182,9 +182,10 @@ class CustomMSDeformableAttention(BaseModule):
         if query_pos is not None:
             query = query + query_pos
         if not self.batch_first:
-            # change to (bs, num_query ,embed_dims)
-            query = query.permute(1, 0, 2)
-            value = value.permute(1, 0, 2)
+            # change to (bs, num_query, embed_dims)
+            ...
+        query = query.permute(1, 0, 2)
+        value = value.permute(1, 0, 2)
 
         bs, num_query, _ = query.shape
         bs, num_value, _ = value.shape
@@ -239,7 +240,8 @@ class CustomMSDeformableAttention(BaseModule):
         output = self.output_proj(output)
 
         if not self.batch_first:
-            # (num_query, bs ,embed_dims)
-            output = output.permute(1, 0, 2)
+            # change back to (num_query, bs ,embed_dims)
+            ...
+        output = output.permute(1, 0, 2)
 
         return self.dropout(output) + identity

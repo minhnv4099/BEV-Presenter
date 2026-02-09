@@ -34,6 +34,8 @@ class TemporalSelfAttention(BaseModule):
             Attention. Default: 4.
         num_points (int): The number of sampling points for
             each query in each head. Default: 4.
+        num_bev_queue (int): In this version, we only use one history BEV and one current BEV query.
+            So the length of BEV queue is 2.
         im2col_step (int): The step used in image_to_column.
             Default: 64.
         dropout_p (float): A Dropout layer on `inp_identity`.
@@ -45,8 +47,6 @@ class TemporalSelfAttention(BaseModule):
             Default: None.
         init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
             Default: None.
-        num_bev_queue (int): In this version, we only use one history BEV and one current BEV query.
-         So the length of BEV queue is 2.
     """
 
     def __init__(
@@ -82,7 +82,7 @@ class TemporalSelfAttention(BaseModule):
                 raise ValueError(
                     'invalid input for _is_power_of_2: {} (type: {})'.format(
                         n, type(n)))
-            return (n & (n - 1) == 0) and n != 0
+            return n != 0 and (n & (n - 1) == 0)
 
         if not _is_power_of_2(dim_per_head):
             warnings.warn(
@@ -110,8 +110,7 @@ class TemporalSelfAttention(BaseModule):
             in_features=embed_dims*self.num_bev_queue,
             out_features=num_bev_queue * num_heads * num_levels * num_points
         )
-        # NOTE: why not need query_proj
-        # query use to compute offset
+        # query use to compute offset only
         # no for attention computing, so no need
         self.value_proj = nn.Linear(embed_dims, embed_dims)
         self.output_proj = nn.Linear(embed_dims, embed_dims)
@@ -161,19 +160,17 @@ class TemporalSelfAttention(BaseModule):
 
         Args:
             query (Tensor):
-                The input query with shape [num_queries, bs, embed_dims]
-                if self.batch_first is False, else `[bs, num_queries embed_dims]`.
+                The input query with shape [num_queries, bs, embed_dims].
+                if self.batch_first is False, else `[bs, num_queries, embed_dims]`.
             key (Tensor): The key tensor with shape
                 `(bs, num_value, embed_dims)`. It isn't used in this attention module.
-            value (Tensor): The value tensor with shape [num_queries, bs, embed_dims]
-                if self.batch_first is False, else `[bs, num_queries, embed_dims]`.
+            value (Tensor): The value tensor with shape `(num_value, bs, embed_dims)`
+                if self.batch_first is False, else `[bs, num_value, embed_dims]`.
             identity (Tensor): The tensor used for addition, with the
                 same shape as `query`. Default None. If None,
                 `query` will be used.
-            query_pos (Tensor): The positional encoding for `query`.
-                Default: None.
-            key_pos (Tensor): The positional encoding for `key`. Default
-                None.
+            query_pos (Tensor): The positional encoding for `query`. Default: None.
+            key_pos (Tensor): The positional encoding for `key`. Default None.
             reference_points (Tensor): The normalized reference
                 points with shape (bs, num_query, num_levels, 2),
                 `(bs*2, num_bew_query, num_bev_level [1], 2)`
@@ -196,9 +193,8 @@ class TemporalSelfAttention(BaseModule):
         """
         if value is None:
             assert self.batch_first
-            bs, len_bev, c = query.shape
-            value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)
-            # value = torch.cat([query, query], 0)
+            bs, num_query, c = query.shape
+            value = torch.stack([query, query], 1).reshape(bs*2, num_query, c)
 
         if identity is None:
             identity = query
@@ -222,7 +218,7 @@ class TemporalSelfAttention(BaseModule):
         if key_padding_mask is not None:
             value = value.masked_fill(key_padding_mask[..., None], 0.0)
 
-        # `(bs*num_bev_queue, num_value, num_head, head_dim)`
+        # (bs*num_bev_queue, num_value, num_head, head_dim)
         value = value.reshape(bs*self.num_bev_queue, num_value, self.num_heads, -1)
 
         # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points * 2)
@@ -230,6 +226,7 @@ class TemporalSelfAttention(BaseModule):
         # (bs, num_query, num_heads, num_bev_queue, num_levels, num_points, 2)
         sampling_offsets = sampling_offsets.view(
             bs, num_query, self.num_heads,  self.num_bev_queue, self.num_levels, self.num_points, 2)
+
         # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points)
         # (bs, num_query, num_heads, num_bev_queue, num_levels * num_points)
         attention_weights = self.attention_weights(query).view(

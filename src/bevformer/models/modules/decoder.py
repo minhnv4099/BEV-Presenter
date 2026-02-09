@@ -7,6 +7,7 @@ import copy
 import torch
 from torch import Tensor
 from typing import Optional, Sequence
+import torch.nn as nn
 
 from src.typing import ConfigType
 from src.bevformer.transformers.layers import TransformerLayerSequence
@@ -57,17 +58,19 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
     def forward(
         self,
         query: Tensor,
-        key: Tensor,
-        value: Tensor,
-        query_pos: Optional[Tensor],
-        key_pos,
-        attention_mask,
-        attn_mask,
-        head_mask,
+        key: Optional[Tensor] = None,
+        value: Optional[Tensor] = None,
         *args,
+        query_pos: Optional[Tensor] = None,
+        # key_pos: Optional[Tensor] = None,
+        attn_masks: Optional[Tensor] = None,
+        query_key_padding_mask: Optional[Tensor] = None,
+        key_padding_mask: Optional[Tensor] = None,
         reference_points=None,
-        reg_branches=None,
-        key_padding_mask=None,
+        reg_branches: Optional[nn.ModuleList] = None,
+        cls_branches: Optional[nn.ModuleList] = None,
+        spatial_shapes: Optional[Tensor] = None,
+        level_start_index: Optional[Tensor] = None,
         **kwargs
     ):
         """Forward function for `Detr3DTransformerDecoder`.
@@ -82,6 +85,8 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
                 refining the regression results. Only would
                 be passed when with_box_refine is True,
                 otherwise would be passed a `None`.
+            key_padding_mask (Tensor): ByteTensor for `query`, with
+                shape [bs, num_keys]. Default: None.
         Returns:
             Tensor: Results with shape [1, num_query, bs, embed_dims] when
                 return_intermediate is `False`, otherwise it has shape
@@ -91,13 +96,18 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
         intermediate: list[Tensor] = []
         intermediate_reference_points: list[Tensor] = []
         for lid, layer in enumerate(self.layers):
-            reference_points_input = reference_points[..., :2].unsqueeze(
-                2)  # (bs, num_query, num_level, 2)
+            # (bs, num_query, num_level, 2)
+            reference_points_input = reference_points[..., :2].unsqueeze(2)
             output = layer(
                 output,
+                key,
+                value,
                 *args,
+                query_pos=query_pos,
                 reference_points=reference_points_input,
                 key_padding_mask=key_padding_mask,
+                spatial_shapes=spatial_shapes,
+                level_start_index=level_start_index,
                 **kwargs
             )
             output = output.permute(1, 0, 2)
@@ -193,6 +203,7 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                 key_pos: Optional[Tensor] = None,
                 *,
                 attn_masks: Optional[Tensor] = None,
+                reference_points: Optional[Tensor] = None,
                 self_attn_mask: Optional[Tensor] = None,
                 cross_attn_mask: Optional[Tensor] = None,
                 key_padding_mask: Optional[Tensor] = None,
@@ -246,15 +257,28 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
 
         for operation in self.operation_order:
             if operation == 'self_attn':
+                # query = self.attentions[attn_index](
+                #     query,
+                #     query,
+                #     query,
+                #     query_pos,
+                #     key_pos,
+                #     identity if self.pre_norm else None,
+                #     attn_mask=attn_masks[attn_index],
+                # )
                 query = self.attentions[attn_index](
                     query,
-                    query,
-                    query,
-                    query_pos,
-                    key_pos,
+                    key,
+                    value,
                     identity if self.pre_norm else None,
+                    query_pos=query_pos,
+                    key_pos=key_pos,
+                    reference_points=reference_points,
+                    # mask=mask,
                     attn_mask=attn_masks[attn_index],
-                )
+                    key_padding_mask=key_padding_mask,
+                    # level_start_index=level_start_index,
+                    **kwargs)
                 attn_index += 1
                 identity = query
 
@@ -271,13 +295,11 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                     identity if self.pre_norm else None,
                     query_pos=query_pos,
                     key_pos=key_pos,
-                    reference_points=ref_3d,
-                    reference_points_cam=reference_points_cam,
-                    mask=mask,
+                    reference_points=reference_points,
+                    # mask=mask,
                     attn_mask=attn_masks[attn_index],
                     key_padding_mask=key_padding_mask,
-                    spatial_shapes=spatial_shapes,
-                    level_start_index=level_start_index,
+                    # level_start_index=level_start_index,
                     **kwargs)
                 attn_index += 1
                 identity = query
@@ -287,5 +309,4 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                     query, identity if self.pre_norm else None)
                 ffn_index += 1
 
-            return query
-
+        return query

@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Dict, List, Optional, Tuple, Union
 
 import mmengine
-from mmcv import BaseTransform
+from .pipelines import BaseTransform
 from .compose import Compose
 
 from src.registry import TRANSFORMS

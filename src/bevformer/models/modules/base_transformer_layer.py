@@ -2,18 +2,15 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
-import math
 from typing import Optional, TYPE_CHECKING
-import numpy as np
-import copy
-
+import math
 import torch
 import torch.nn as nn
 
 from mmengine.model import BaseModule
 
 from src.utils.logging import getLogger
-from src.registry import TRANSFORMER_LAYERS, MODELS, TRANSFORMER_BLOCKS
+from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
 from src.modeling_output import BaseModelOutput
 from src.utils.telemetry import timing
 from src.bevformer.models.utils.bricks import build_transformer_layer
@@ -25,13 +22,6 @@ if TYPE_CHECKING:
     ...
 
 logger = getLogger(__name__)
-
-
-@MODELS.register_module()
-class PatchEmbeddings(nn.Module):
-    """ Construct the position embedding into feature maps.
-    Embedding layer receiving feature maps and make it ready to feed to Transformers.
-    """
 
 
 @TRANSFORMER_LAYERS.register_module()
@@ -68,7 +58,6 @@ class BaseOriginalTransformerLayer(BaseModule):
         **kwargs
     ) -> torch.Tensor:
         identity = query
-
         # layernorm unnormalized input
         query_norm = self.layernorm_before(query)
         # first residual connection occurs in attention layer

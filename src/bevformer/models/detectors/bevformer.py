@@ -18,6 +18,7 @@ from .mvx_two_stage import MVXTwoStageDetector
 
 if TYPE_CHECKING:
     from src.modeling_output import BackboneOutput
+    from src.structures.bbox_3d import BaseInstance3DBoxes
 
 
 logger = getLogger(__name__)
@@ -26,7 +27,7 @@ logger = getLogger(__name__)
 @MODELS.register_module()
 @DETECTORS.register_module()
 class BEVFormerDetector(MVXTwoStageDetector):
-    """BEVFormer.
+    """BEVFormer Detector, an end-to-end detector.
 
     Args:
         video_test_mode (bool): Decide whether to use temporal information during inference.
@@ -36,10 +37,9 @@ class BEVFormerDetector(MVXTwoStageDetector):
         self,
         # arguments for self
         use_grid_mask=False,
-        pts_voxel_layer=None,
         pretrained=None,
         video_test_mode=False,
-        # arguments for supper
+        pts_voxel_layer=None,
         pts_voxel_encoder: Optional[dict] = None,
         pts_middle_encoder: Optional[dict] = None,
         pts_fusion_layer: Optional[dict] = None,
@@ -90,25 +90,170 @@ class BEVFormerDetector(MVXTwoStageDetector):
             'prev_angle': 0,
         }
 
+    def forward(self, *args, return_loss: bool = True, **kwargs):
+        """Calls either forward_train or forward_test depending on whether
+        `return_loss=True`.
+
+        Note::
+
+        This setting will change the expected inputs. When
+        `return_loss=True`, img and img_metas are single-nested (i.e.
+        torch.Tensor and list[dict]), and when `return_loss=False`, img and
+        img_metas should be double nested (i.e.  list[torch.Tensor],
+        list[list[dict]]), with the outer list indicating test time
+        augmentations.
+        """
+        if return_loss:
+            return self.forward_train(*args, **kwargs)
+        else:
+            return self.forward_test(*args, **kwargs)
+
+    def forward_train(
+        self,
+        img: torch.Tensor,
+        img_metas: list[dict],
+        points: Optional[list[torch.Tensor]] = None,
+        gt_bboxes_3d: Optional[list['BaseInstance3DBoxes']] = None,
+        gt_labels_3d: Optional[list[torch.Tensor]] = None,
+        gt_labels: Optional[list[torch.Tensor]] = None,
+        gt_bboxes: Optional[list[torch.Tensor]] = None,
+        proposals: Optional[list[torch.Tensor]] = None,
+        gt_bboxes_ignore: Optional[list[torch.Tensor]] = None,
+        img_depth=None,
+        img_mask=None,
+        batch_size: int = 3,
+    ):
+        """Forward training function.
+
+        Args:
+            img (torch.Tensor): Images of each sample with shape
+                `(bs, n_queue, num_cam, C, H, W)`.
+                The last `n_queue - 1` is previous images.
+            img_metas (list[dict], optional): Meta information of each sample.
+                Length of `bs`, each of `n_queue`.
+            points (list[torch.Tensor], optional): Points of each sample.
+                Length of `bs`. Defaults to None.
+            gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`], optional):
+                Ground truth 3D boxes. Defaults to None.
+            gt_labels_3d (list[torch.Tensor], optional): Ground truth labels
+                of 3D boxes. Defaults to None.
+            gt_labels (list[torch.Tensor], optional): Ground truth labels
+                of 2D boxes in images. Defaults to None.
+            gt_bboxes (list[torch.Tensor], optional): Ground truth 2D boxes in
+                images. Defaults to None.
+            proposals (list[torch.Tensor], optional): Predicted proposals
+                used for training Fast RCNN. Defaults to None.
+            gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
+                2D boxes in images to be ignored. Defaults to None.
+        Returns:
+            dict: Losses of different branches.
+        """
+        if len(img.shape) == 5:
+            img = torch.stack([img] * batch_size, dim=0)
+            img_metas = [img_metas] * batch_size
+            gt_bboxes_3d = [gt_bboxes_3d] * batch_size
+            gt_labels_3d = [gt_labels_3d] * batch_size
+
+        len_queue = img.size(1)
+        # shape (bs, n_queue-1, n_cam, C, H, W)
+        prev_img = img[:, :-1, ...]
+        # (bs, n_cam, C, H, W)
+        curr_img = img[:, -1, ...]
+
+        prev_img_metas = copy.deepcopy(img_metas)
+        prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
+
+        # get last meta in queue
+        img_metas = [each[len_queue - 1] for each in img_metas]
+        if not img_metas[0]['prev_bev_exists']:
+            prev_bev = None
+
+        # list of `n_levels` of `(bs, n_cam, c, h, w)`
+        img_feats = self.extract_feat(pixel_values=curr_img, img_metas=img_metas)
+
+        losses = dict()
+        losses_pts = self.forward_pts_train(
+            img_feats,
+            img_metas=img_metas,
+            gt_bboxes_3d=gt_bboxes_3d,
+            gt_labels_3d=gt_labels_3d,
+            gt_bboxes_ignore=gt_bboxes_ignore,
+            prev_bev=prev_bev
+        )
+
+        losses.update(losses_pts)
+        return losses
+
+    def obtain_history_bev(self, imgs_queue: torch.Tensor, img_metas_list: list[dict]):
+        """Obtain history BEV features iteratively. To save GPU memory, gradients are not calculated.
+        Args:
+            imgs_queue (torch.Tensor):
+                Queue of previous images. Shape of `(bs, n_queue - 1, n_cam, C, H, W)`.
+            img_metas_list (list[dict]):
+                List of metadata of images in queue. Length of 'bs', each has length of `n_queue`.
+        """
+        self.eval()
+        with torch.no_grad():
+            prev_bev = None
+            bs, len_queue, num_cams, C, H, W = imgs_queue.shape
+            imgs_queue = imgs_queue.reshape(bs * len_queue, num_cams, C, H, W)
+            # list of `n_levels` of `(bs, len_queue, n_cam, C, H, W)`
+            img_feats_list = self.extract_feat(
+                pixel_values=imgs_queue,
+                len_queue=len_queue,
+                img_metas=img_metas_list)
+
+            # over queue to get prev_bev
+            for i in range(len_queue):
+                img_metas = [each_sample[i] for each_sample in img_metas_list]
+                if not img_metas[0]['prev_bev_exists']:
+                    prev_bev = None
+
+                # get each element in queue
+                img_feats = [each_scale[:, i] for each_scale in img_feats_list]
+
+                prev_bev = self.pts_bbox_head(
+                    img_feats, img_metas, prev_bev,
+                    only_bev=True)
+
+            self.train()
+
+            return prev_bev
+
+    def extract_feat(self, pixel_values, img_metas: list[dict], len_queue: int = None) -> list[torch.Tensor]:
+        """Extract feature maps of images and points via backbones and optionally neck (FPN).
+
+        Args:
+            pixel_values (`torch.Tensor`): Batch of images to extract features maps.
+            img_metas (`list[dict]): Metadata of images.
+            len_queue (`int`, *optional* default to ``None``): Queue length.
+        Returns:
+            Tuple of tensor with shape `[..., len_queue, num_cam, c, h, w]`.
+        """
+        img_feats = self.extract_img_feat(pixel_values, img_metas, len_queue=len_queue)
+        return img_feats
+
     @auto_fp16(apply_to=('pixel_values',))
     def extract_img_feat(
         self,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        img_metas: Optional[list[dict]] = None,
+        pixel_values: torch.Tensor,
+        img_metas: list[dict],
         len_queue: Optional[int] = None
     ) -> list[torch.Tensor]:
         """Extract feature maps of image via backbones and optionally neck (FPN).
 
         Args:
-            pixel_values (`torch.FloatTensor`): Batch of images to extract features maps.
-            img_metas (`list[dict], *optional* default to None): Metadata of images.
+            pixel_values (`torch.FloatTensor`):
+                Batch of images to extract features maps.
+                Shape of `[bs, n_cam, C (3), H, W]`
+            img_metas (`list[dict]):
+                List of `bs` metadata of images.
             len_queue (`int`, *optional* default to ``None``): Queue length.
+                Indicate by the first dimension (i.e. bs).
+        Returns:
+            Tuple of tensor with shape `[..., len_queue, n_ca m, c, h, w]`.
         """
-        if pixel_values is None:
-            return None
-
         B = pixel_values.size(0)
-
         input_shape = pixel_values.shape[-2:]
         # update real input shape of each single img
         for img_meta in img_metas:
@@ -124,8 +269,9 @@ class BEVFormerDetector(MVXTwoStageDetector):
         if self.use_grid_mask:
             pixel_values = self.grid_mask(pixel_values)
 
-        backbone_output: "BackboneOutput" = self.img_backbone(pixel_values)
-        feature_maps = backbone_output.feature_maps
+        # backbone_output: "BackboneOutput" = self.img_backbone(pixel_values)
+        # feature_maps = backbone_output.feature_maps
+        feature_maps = self.img_backbone(pixel_values)
 
         if self.with_img_neck:
             feature_maps = self.img_neck(feature_maps)
@@ -134,35 +280,23 @@ class BEVFormerDetector(MVXTwoStageDetector):
         for feature_map in feature_maps:
             BN, C, H, W = feature_map.size()
             if len_queue is not None:
+                # return when getting history bev
                 img_feats_reshaped.append(feature_map.view(int(B / len_queue), len_queue, int(BN / B), C, H, W))
             else:
                 img_feats_reshaped.append(feature_map.view(B, int(BN / B), C, H, W))
 
         return img_feats_reshaped
 
-    def extract_feat(self, pixel_values, img_metas=None, len_queue=None) -> list[torch.Tensor]:
-        """Extract feature maps of images and points via backbones and optionally neck (FPN).
-
-        Args:
-            pixel_values (`torch.FloatTensor`): Batch of images to extract features maps.
-            img_metas (`list[dict], *optional* default to None): Metadata of images.
-            len_queue (`int`, *optional* default to ``None``): Queue length.
-        """
-
-        img_feats = self.extract_img_feat(pixel_values, img_metas, len_queue=len_queue)
-
-        return img_feats
-
     def forward_pts_train(
         self,
-        pts_feats,
-        gt_bboxes_3d,
-        gt_labels_3d,
-        img_metas,
-        gt_bboxes_ignore=None,
-        prev_bev=None
+        pts_feats: list[torch.Tensor],
+        gt_bboxes_3d: list,
+        gt_labels_3d: list[torch.Tensor],
+        img_metas: list[dict],
+        gt_bboxes_ignore: Optional[list[torch.Tensor]] = None,
+        prev_bev: Optional[torch.Tensor] = None
     ):
-        """Forward function
+        """Forward function to forward ``pts_bbox_head``.
 
         Args:
             pts_feats (list[torch.Tensor]): Features of point cloud branch
@@ -182,6 +316,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
             img_metas=img_metas,
             prev_bev=prev_bev
         )
+
         loss_inputs = [gt_bboxes_3d, gt_labels_3d, outs]
         losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
 
@@ -190,109 +325,6 @@ class BEVFormerDetector(MVXTwoStageDetector):
     def forward_dummy(self, img):
         dummy_metas = None
         return self.forward_test(img=img, img_metas=[[dummy_metas]])
-
-    def forward(self, return_loss=True, **kwargs):
-        """Calls either forward_train or forward_test depending on whether
-        return_loss=True.
-
-        Note::
-
-        This setting will change the expected inputs. When
-        `return_loss=True`, img and img_metas are single-nested (i.e.
-        torch.Tensor and list[dict]), and when `return_loss=False`, img and
-        img_metas should be double nested (i.e.  list[torch.Tensor],
-        list[list[dict]]), with the outer list indicating test time
-        augmentations.
-        """
-        if return_loss:
-            return self.forward_train(**kwargs)
-        else:
-            return self.forward_test(**kwargs)
-
-    def obtain_history_bev(self, imgs_queue: torch.Tensor, img_metas_list: list[dict]):
-        """Obtain history BEV features iteratively. To save GPU memory, gradients are not calculated."""
-        self.eval()
-
-        with torch.no_grad():
-            prev_bev = None
-            bs, len_queue, num_cams, C, H, W = imgs_queue.shape
-            imgs_queue = imgs_queue.reshape(bs * len_queue, num_cams, C, H, W)
-            img_feats_list = self.extract_feat(img=imgs_queue, len_queue=len_queue)
-            for i in range(len_queue):
-                img_metas = [each[i] for each in img_metas_list]
-                if not img_metas[0]['prev_bev_exists']:
-                    prev_bev = None
-                # img_feats = self.extract_feat(img=img, img_metas=img_metas)
-                img_feats = [each_scale[:, i] for each_scale in img_feats_list]
-                prev_bev = self.pts_bbox_head(
-                    img_feats, img_metas, prev_bev, only_bev=True)
-
-            self.train()
-
-            return prev_bev
-
-    def forward_train(
-        self,
-        points: Optional[list[torch.Tensor]] = None,
-        img_metas: Optional[list[dict]] = None,
-        gt_bboxes_3d: Optional[list['BaseInstance3DBoxes']] = None,
-        gt_labels_3d: Optional[list[torch.Tensor]] = None,
-        gt_labels: Optional[list[torch.Tensor]] = None,
-        gt_bboxes: Optional[list[torch.Tensor]] = None,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        proposals: Optional[list[torch.Tensor]] = None,
-        gt_bboxes_ignore: Optional[list[torch.Tensor]] = None,
-        img_depth=None,
-        img_mask=None,
-    ):
-        """Forward training function.
-
-        Args:
-            points (list[torch.Tensor], optional): Points of each sample.
-                Defaults to None.
-            img_metas (list[dict], optional): Meta information of each sample.
-                Defaults to None.
-            gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`], optional):
-                Ground truth 3D boxes. Defaults to None.
-            gt_labels_3d (list[torch.Tensor], optional): Ground truth labels
-                of 3D boxes. Defaults to None.
-            gt_labels (list[torch.Tensor], optional): Ground truth labels
-                of 2D boxes in images. Defaults to None.
-            gt_bboxes (list[torch.Tensor], optional): Ground truth 2D boxes in
-                images. Defaults to None.
-            pixel_values (torch.Tensor optional): Images of each sample with shape
-                (N, C, H, W). Defaults to None.
-            proposals (list[torch.Tensor], optional): Predicted proposals
-                used for training Fast RCNN. Defaults to None.
-            gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
-                2D boxes in images to be ignored. Defaults to None.
-        Returns:
-            dict: Losses of different branches.
-        """
-
-        len_queue = pixel_values.size(1)
-        prev_img = pixel_values[:, :-1, ...]
-        img = pixel_values[:, -1, ...]
-
-        prev_img_metas = copy.deepcopy(img_metas)
-        prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
-
-        img_metas = [each[len_queue - 1] for each in img_metas]
-        if not img_metas[0]['prev_bev_exists']:
-            prev_bev = None
-        img_feats = self.extract_feat(pixel_values=img, img_metas=img_metas)
-        losses = dict()
-        losses_pts = self.forward_pts_train(
-            img_feats,
-            gt_bboxes_3d=gt_bboxes_3d,
-            gt_labels_3d=gt_labels_3d,
-            img_metas=img_metas,
-            gt_bboxes_ignore=gt_bboxes_ignore,
-            prev_bev=prev_bev
-        )
-
-        losses.update(losses_pts)
-        return losses
 
     def forward_test(self, img_metas, img=None, **kwargs):
         if not isinstance(img_metas, list):

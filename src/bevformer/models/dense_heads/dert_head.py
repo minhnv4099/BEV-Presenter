@@ -13,7 +13,7 @@ from mmcv.cnn.bricks.transformer import FFN
 
 from src.typing import ConfigType
 from src.utils.logging import getLogger
-from src.registry import HEADS
+from src.registry import HEADS, BBOX_SAMPLERS
 from src.bevformer.models.utils.bricks import build_transformer
 
 from src.bevformer.core.bbox import build_assigner
@@ -106,6 +106,9 @@ class DETRHead(BaseModule):
             self.assigner = build_assigner(assigner)
             if train_cfg.get('sampler', None) is not None:
                 logger.warning('DETR do not build sampler.')
+
+            sampler_cfg = dict(type='PseudoSampler')
+            self.sampler = BBOX_SAMPLERS.build(sampler_cfg)
 
         self.num_classes = num_classes
         self.embed_dims = embed_dims

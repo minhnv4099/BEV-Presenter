@@ -21,7 +21,7 @@ from mmengine.utils.version_utils import digit_version
 
 from src.utils.logging import getLogger
 from src.utils.fp16_utils import force_fp32, auto_fp16
-from src.typing import ConfigType, OptionalTensor
+from src.typing import ConfigType
 from src.bevformer.transformers.layers import TransformerLayerSequence
 from .base_transformer_layer_v2 import CustomBaseTransformerLayer
 
@@ -146,7 +146,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
             pc_range (`Sequence[float]`):
                 Point cloud range.
             img_metas (`list[dict]`):
-                List of image information (metadata).
+                List of `bs` of `n_cam` (metadata).
         Returns:
             Tuple of 2 tensors
 
@@ -334,10 +334,9 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 shift = torch.scalar_tensor(shift, requires_grad=False),
                 
         # bug: this code should be 'shift_ref_2d = ref_2d.clone()', we keep this bug for reproducing our results in paper.
-        shift_ref_2d = ref_2d.clone()
         # align ref point 2d to match with previous bev instead of aligning previous bev. NOTE need to justify.
         logger.info("Align BEV plane by 2D reference points.")
-        shift_ref_2d += shift[None, None, None, None]
+        shift_ref_2d = ref_2d.clone() + shift[:, None, None, :]
     
         # (num_query, bs, embed_dims) -> (bs, num_query, embed_dims)
         bev_query = bev_query.permute(1, 0, 2)

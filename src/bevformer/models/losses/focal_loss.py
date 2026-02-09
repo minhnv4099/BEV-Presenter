@@ -5,7 +5,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.registry import MODELS, LOSSES
+from src.utils.logging import getLogger
 from .utils import weight_reduce_loss
+
+logger = getLogger(__name__)
 
 
 # This method is only for debugging
@@ -36,6 +39,8 @@ def py_sigmoid_focal_loss(
     """
     pred_sigmoid = pred.sigmoid()
     target = target.type_as(pred)
+    # logger.info(target.shape)
+    # logger.info(pred_sigmoid.shape)
     pt = (1 - pred_sigmoid) * target + pred_sigmoid * (1 - target)
     focal_weight = (alpha * target + (1 - alpha) *
                     (1 - target)) * pt.pow(gamma)

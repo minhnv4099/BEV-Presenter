@@ -58,7 +58,7 @@ DATASETS = Registry(
 DATA_SAMPLERS = Registry(
     'data sampler', parent=MMENGINE_DATA_SAMPLERS,
     # TODO: update the location when {PACKAGE} has its own data sampler
-    locations=[f'{PACKAGE}.datasets'])
+    locations=[f'src.datasets.samplers'])
 TRANSFORMS = Registry(
     'transform', parent=MMENGINE_TRANSFORMS,
     locations=["src.datasets.transforms"])
@@ -112,11 +112,11 @@ DETECTORS = Registry(
 # manage task-specific modules like anchor generators and box coders
 TASK_UTILS = Registry(
     'task util', parent=MMENGINE_TASK_UTILS, locations=[f'{PACKAGE}.models'])
-BBOX_CODERS = Registry(
-    "bbox_coder", scope="bbox_coder", parent=TASK_UTILS,
-    locations=[f'{PACKAGE}.core.bbox'])
 MATCH_COST = Registry(
     "match_cost", scope="match_cost", parent=TASK_UTILS,
+    locations=[f'{PACKAGE}.core.bbox'])
+BBOX_CODERS = Registry(
+    "bbox_coder", scope="bbox_coder", parent=TASK_UTILS,
     locations=[f'{PACKAGE}.core.bbox'])
 ASSIGNERS = Registry(
     "assigner", scope="assigner", parent=TASK_UTILS,
@@ -124,6 +124,9 @@ ASSIGNERS = Registry(
 LOSSES = Registry(
     "loss", scope="loss", parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.losses'])
+BBOX_SAMPLERS = Registry(
+    "bbox_sampler", scope="bbox_sampler", parent=TASK_UTILS,
+    locations=[f'src.bevformer.core.bbox.samplers'])
 
 # mangage all kinds of optimizers like `SGD` and `Adam`
 OPTIMIZERS = Registry(

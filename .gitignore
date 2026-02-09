@@ -36,6 +36,7 @@ MANIFEST
 
 data/nuscenes/can_bus
 data/nuscenes/v1.0-mini
+/assets/
 
 # exclude
 !/data/**/.json
@@ -144,3 +145,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+/assets/nuscenes-schema.svg

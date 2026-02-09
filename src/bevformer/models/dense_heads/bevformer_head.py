@@ -16,7 +16,10 @@ from ...models.utils.misc import multi_apply
 from .dert_head import DETRHead
 from src.bevformer.core.bbox.utils import normalize_bbox
 from src.utils.fp16_utils import force_fp32, auto_fp16
+from src.utils.logging import getLogger
 from src.bevformer.builder import build_positional_encoding
+
+logger = getLogger(__name__)
 
 
 @MODELS.register_module()
@@ -45,7 +48,6 @@ class BEVFormerHead(DETRHead):
         bbox_coder: Optional[ConfigType] = None,
         positional_encoding: Optional[ConfigType] = None,
         num_cls_fcs: int = 2,
-        in_channels: int = None,
         code_weights=None,
         num_query: int = None,
         **kwargs
@@ -124,7 +126,7 @@ class BEVFormerHead(DETRHead):
 
         if not self.as_two_stage:
             self.bev_embedding = nn.Embedding(self.bev_h * self.bev_w, self.embed_dims)
-            self.query_embedding = nn.Embedding(self.num_query, self.embed_dims * 2)
+            self.object_query_embedding = nn.Embedding(self.num_query, self.embed_dims * 2)
 
     def init_weights(self):
         """Initialize weights of the DeformDETR head."""
@@ -137,18 +139,18 @@ class BEVFormerHead(DETRHead):
     @auto_fp16(apply_to=('mlvl_feats', ))
     def forward(
         self,
-        mlvl_feats: tuple[torch.Tensor],
+        mlvl_feats: list[torch.Tensor],
         img_metas: list[dict],
         prev_bev: Optional[torch.Tensor] = None,
         only_bev: bool = False
     ):
         """Forward function.
         Args:
-            mlvl_feats (tuple[Tensor]): Features from the upstream
-                network, each is a 5D-tensor with shape
-                (B, N, C, H, W).
-            prev_bev: previous bev featues
-            only_bev: only compute BEV features with encoder. 
+            mlvl_feats (list[Tensor]): List of `n_level` features from the upstream
+                network, each is a 5D-tensor with shape `(bs, n_cam, c, h, w)`.
+            prev_bev (Tensor): Previous bev features.
+            only_bev (bool): Only compute BEV features with encoder.
+            img_metas (list[dict]): Image metadata list of `bs` of `n_queue`.
         Returns:
             all_cls_scores (Tensor): Outputs from the classification head, \
                 shape [nb_dec, bs, num_query, cls_out_channels]. Note \
@@ -159,14 +161,15 @@ class BEVFormerHead(DETRHead):
         """
         bs, num_cam, _, _, _ = mlvl_feats[0].shape
         dtype = mlvl_feats[0].dtype
+        device = mlvl_feats[0].device
 
-        object_query_embeds = self.query_embedding.weight.to(dtype) if self.as_two_stage else None
-        bev_queries = self.bev_embedding.weight.to(dtype) if self.as_two_stage else None
+        object_queries = self.object_query_embedding.weight.to(dtype) if not self.as_two_stage else None
+        bev_queries = self.bev_embedding.weight.to(dtype) if not self.as_two_stage else None
 
-        bev_mask = torch.zeros((bs, self.bev_h, self.bev_w), device=bev_queries.device).to(dtype)
+        bev_mask = torch.zeros((bs, self.bev_h, self.bev_w), device=device).to(dtype)
         bev_pos = self.positional_encoding(bev_mask).to(dtype)
 
-        if only_bev:  # only use encoder to obtain BEV features, TODO: refine the workaround
+        if only_bev:  # only use encoder to obtain BEV features
             return self.transformer.get_bev_features(
                 mlvl_feats,
                 bev_queries,
@@ -174,14 +177,14 @@ class BEVFormerHead(DETRHead):
                 self.bev_w,
                 grid_length=(self.real_h / self.bev_h, self.real_w / self.bev_w),
                 bev_pos=bev_pos,
-                img_metas=img_metas,
                 prev_bev=prev_bev,
+                img_metas=img_metas,
             )
         else:
             outputs = self.transformer(
                 mlvl_feats,
                 bev_queries,
-                object_query_embeds,
+                object_queries,
                 self.bev_h,
                 self.bev_w,
                 grid_length=(self.real_h / self.bev_h, self.real_w / self.bev_w),
@@ -193,6 +196,7 @@ class BEVFormerHead(DETRHead):
         )
 
         bev_embed, hs, init_reference, inter_references = outputs
+
         hs = hs.permute(0, 2, 1, 3)
         outputs_classes = []
         outputs_coords = []
@@ -270,11 +274,14 @@ class BEVFormerHead(DETRHead):
         # assigner and sampler
         gt_c = gt_bboxes.shape[-1]
 
-        assign_result = self.assigner.assign(bbox_pred, cls_score, gt_bboxes,
-                                             gt_labels, gt_bboxes_ignore)
+        assign_result = self.assigner.assign(
+            bbox_pred, cls_score, gt_bboxes,
+            gt_labels, gt_bboxes_ignore
+        )
 
-        sampling_result = self.sampler.sample(assign_result, bbox_pred,
-                                              gt_bboxes)
+        sampling_result = self.sampler.sample(
+            assign_result, bbox_pred, gt_bboxes)
+
         pos_inds = sampling_result.pos_inds
         neg_inds = sampling_result.neg_inds
 
@@ -403,7 +410,7 @@ class BEVFormerHead(DETRHead):
 
         # regression L1 loss
         bbox_preds = bbox_preds.reshape(-1, bbox_preds.size(-1))
-        normalized_bbox_targets = normalize_bbox(bbox_targets, self.pc_range)
+        normalized_bbox_targets = normalize_bbox(bbox_targets)
         isnotnan = torch.isfinite(normalized_bbox_targets).all(dim=-1)
         bbox_weights = bbox_weights * self.code_weights
 
@@ -416,7 +423,7 @@ class BEVFormerHead(DETRHead):
             loss_bbox = torch.nan_to_num(loss_bbox)
         return loss_cls, loss_bbox
 
-    @force_fp32(apply_to=('preds_dicts'))
+    @force_fp32(apply_to=('preds_dicts', ))
     def loss(self,
              gt_bboxes_list,
              gt_labels_list,
@@ -463,8 +470,8 @@ class BEVFormerHead(DETRHead):
         device = gt_labels_list[0].device
 
         gt_bboxes_list = [torch.cat(
-            (gt_bboxes.gravity_center, gt_bboxes.tensor[:, 3:]),
-            dim=1).to(device) for gt_bboxes in gt_bboxes_list]
+            (_gt_bboxes.gravity_center, _gt_bboxes.tensor[:, 3:]),
+            dim=1).to(device) for _gt_bboxes in gt_bboxes_list]
 
         all_gt_bboxes_list = [gt_bboxes_list for _ in range(num_dec_layers)]
         all_gt_labels_list = [gt_labels_list for _ in range(num_dec_layers)]
@@ -547,7 +554,7 @@ class BEVFormerHeadGroupDETR(BEVFormerHead):
     def forward(self, mlvl_feats, img_metas, prev_bev=None,  only_bev=False):
         bs, num_cam, _, _, _ = mlvl_feats[0].shape
         dtype = mlvl_feats[0].dtype
-        object_query_embeds = self.query_embedding.weight.to(dtype)
+        object_query_embeds = self.object_query_embedding.weight.to(dtype)
         if not self.training:  # NOTE: Only difference to bevformer head
             object_query_embeds = object_query_embeds[:self.num_query // self.group_detr]
         bev_queries = self.bev_embedding.weight.to(dtype)

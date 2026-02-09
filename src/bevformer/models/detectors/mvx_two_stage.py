@@ -91,7 +91,6 @@ class MVXTwoStageDetector(BaseModule):
             self.img_backbone = MODELS.build(img_backbone)
         if img_neck is not None:
             self.img_neck = MODELS.build(img_neck)
-
         if img_rpn_head is not None:
             self.img_rpn_head = MODELS.build(img_rpn_head)
         if img_roi_head is not None:
@@ -238,13 +237,15 @@ class MVXTwoStageDetector(BaseModule):
         voxel_dict = batch_inputs_dict.get('voxels', None)
         imgs = batch_inputs_dict.get('imgs', None)
         points = batch_inputs_dict.get('points', None)
+
         img_feats = self.extract_img_feat(imgs, batch_input_metas)
         pts_feats = self.extract_pts_feat(
             voxel_dict,
             points=points,
             img_feats=img_feats,
             batch_input_metas=batch_input_metas)
-        return (img_feats, pts_feats)
+
+        return img_feats, pts_feats
 
     def loss(self, batch_inputs_dict: Dict[List, torch.Tensor],
              batch_data_samples: List[Det3DDataSample],
@@ -263,20 +264,19 @@ class MVXTwoStageDetector(BaseModule):
 
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
-
         """
-
         batch_input_metas = [item.metainfo for item in batch_data_samples]
-        img_feats, pts_feats = self.extract_feat(batch_inputs_dict,
-                                                 batch_input_metas)
+        img_feats, pts_feats = self.extract_feat(batch_inputs_dict, batch_input_metas)
         losses = dict()
+
         if pts_feats:
-            losses_pts = self.pts_bbox_head.loss(pts_feats, batch_data_samples,
-                                                 **kwargs)
+            losses_pts = self.pts_bbox_head.loss(pts_feats, batch_data_samples, **kwargs)
             losses.update(losses_pts)
+
         if img_feats:
             losses_img = self.loss_imgs(img_feats, batch_data_samples)
             losses.update(losses_img)
+
         return losses
 
     def loss_imgs(self, x: List[Tensor],

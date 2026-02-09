@@ -4,11 +4,13 @@ from mmengine.fileio import FileClient
 from mmengine.utils import check_file_exist
 from mmcv.image import imread
 from mmcv.transforms.loading import LoadAnnotations
+from .base_transform import BaseTransform
 from src.registry import PIPELINES
+from src.utils.image import imshow
 
 
 @PIPELINES.register_module()
-class LoadMultiViewImageFromFiles(object):
+class LoadMultiViewImageFromFiles(BaseTransform):
     """Load multi channel images from a list of separate channel files.
 
     Expects results['img_filename'] to be a list of filenames.
@@ -23,7 +25,7 @@ class LoadMultiViewImageFromFiles(object):
         self.to_float32 = to_float32
         self.color_type = color_type
 
-    def __call__(self, results):
+    def transform(self, results: dict):
         """Call function to load multi-view image from files.
 
         Args:
@@ -42,8 +44,8 @@ class LoadMultiViewImageFromFiles(object):
                 - img_norm_cfg (dict): Normalization configuration of images.
         """
         filename = results['img_filename']
-        img = np.stack(
-            [imread(name, self.color_type) for name in filename], axis=-1)
+        img = np.stack([imread(name, self.color_type) for name in filename], axis=0)
+
         if self.to_float32:
             img = img.astype(np.float32)
         results['filename'] = filename
@@ -53,7 +55,7 @@ class LoadMultiViewImageFromFiles(object):
         # Set initial values for default meta_keys
         results['pad_shape'] = img.shape
         results['scale_factor'] = 1.0
-        num_channels = 1 if len(img.shape) < 3 else img.shape[2]
+        num_channels = 1 if len(img.shape) < 3 else img.shape[-1]
         results['img_norm_cfg'] = dict(
             mean=np.zeros(num_channels, dtype=np.float32),
             std=np.ones(num_channels, dtype=np.float32),
@@ -67,7 +69,7 @@ class LoadMultiViewImageFromFiles(object):
 
 
 @PIPELINES.register_module()
-class LoadAnnotations3D(LoadAnnotations):
+class LoadAnnotations3D(BaseTransform, LoadAnnotations):
     """Load Annotations3D.
 
     Load instance mask and semantic mask of points and
@@ -116,6 +118,7 @@ class LoadAnnotations3D(LoadAnnotations):
             with_seg,
             poly2mask,
             file_client_args=file_client_args)
+        self.with_attr_label = with_attr_label
         self.with_bbox_3d = with_bbox_3d
         self.with_label_3d = with_label_3d
         self.with_mask_3d = with_mask_3d
@@ -131,7 +134,7 @@ class LoadAnnotations3D(LoadAnnotations):
             dict: The dict containing loaded 3D bounding box annotations.
         """
         results['gt_bboxes_3d'] = results['ann_info']['gt_bboxes_3d']
-        results['bbox3d_fields'].append('gt_bboxes_3d')
+        # results['bbox3d_fields'].append('gt_bboxes_3d')
         return results
 
     def _load_labels_3d(self, results):
@@ -197,7 +200,7 @@ class LoadAnnotations3D(LoadAnnotations):
         results['pts_seg_fields'].append('pts_semantic_mask')
         return results
 
-    def __call__(self, results):
+    def transform(self, results):
         """Call function to load multiple types annotations.
 
         Args:
@@ -207,7 +210,8 @@ class LoadAnnotations3D(LoadAnnotations):
             dict: The dict containing loaded 3D bounding box, label, mask and
                 semantic segmentation annotations.
         """
-        results = super().__call__(results)
+        results = LoadAnnotations.transform(self, results)
+
         if self.with_bbox_3d:
             results = self._load_bboxes_3d(results)
             if results is None:

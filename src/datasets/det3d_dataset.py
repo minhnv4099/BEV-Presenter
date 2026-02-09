@@ -156,26 +156,54 @@ class Det3DDataset(BaseDataset):
                 f'The number of instances per category in the dataset:\n{table.table}',  # noqa: E501
                 'current')
 
-    def _remove_dontcare(self, ann_info: dict) -> dict:
-        """Remove annotations that do not need to be cared.
+    def prepare_data(self, index: int) -> Union[dict, None]:
+        """Data preparation for both training and testing stage.
 
-        -1 indicates dontcare in MMDet3d.
+        Called by `__getitem__`  of dataset.
 
         Args:
-            ann_info (dict): Dict of annotation infos. The
-                instance with label `-1` will be removed.
+            index (int): Index for accessing the target data.
 
         Returns:
-            dict: Annotations after filtering.
+            dict or None: Data dict of the corresponding index.
         """
-        img_filtered_annotations = {}
-        filter_mask = ann_info['gt_labels_3d'] > -1
-        for key in ann_info.keys():
-            if key != 'instances':
-                img_filtered_annotations[key] = (ann_info[key][filter_mask])
+        ori_input_dict = self.get_data_info(index)
+
+        # deepcopy here to avoid inplace modification in pipeline.
+        input_dict = copy.deepcopy(ori_input_dict)
+
+        # box_type_3d (str): 3D box type.
+        input_dict['box_type_3d'] = self.box_type_3d
+        # box_mode_3d (str): 3D box mode.
+        input_dict['box_mode_3d'] = self.box_mode_3d
+
+        # pre-pipline return None to random another in `__getitem__`
+        if not self.test_mode and self.filter_empty_gt:
+            if len(input_dict['ann_info']['gt_labels_3d']) == 0:
+                return None
+
+        example = self.pipeline(input_dict)
+
+        if not self.test_mode and self.filter_empty_gt:
+            # after pipeline drop the example with empty annotations
+            # return None to random another in `__getitem__`
+            if example is None or len(
+                    example['data_samples'].gt_instances_3d.labels_3d) == 0:
+                return None
+
+        if self.show_ins_var:
+            if 'ann_info' in ori_input_dict:
+                self._show_ins_var(
+                    ori_input_dict['ann_info']['gt_labels_3d'],
+                    example['data_samples'].gt_instances_3d.labels_3d)
             else:
-                img_filtered_annotations[key] = ann_info[key]
-        return img_filtered_annotations
+                print_log(
+                    "'ann_info' is not in the input dict. It's probably that "
+                    'the data is not in training mode',
+                    'current',
+                    level=30)
+
+        return example
 
     def get_ann_info(self, index: int) -> dict:
         """Get annotation info according to the given index.
@@ -327,6 +355,27 @@ class Det3DDataset(BaseDataset):
 
         return info
 
+    def _remove_dontcare(self, ann_info: dict) -> dict:
+        """Remove annotations that do not need to be cared.
+
+        -1 indicates dontcare in MMDet3d.
+
+        Args:
+            ann_info (dict): Dict of annotation infos. The
+                instance with label `-1` will be removed.
+
+        Returns:
+            dict: Annotations after filtering.
+        """
+        img_filtered_annotations = {}
+        filter_mask = ann_info['gt_labels_3d'] > -1
+        for key in ann_info.keys():
+            if key != 'instances':
+                img_filtered_annotations[key] = (ann_info[key][filter_mask])
+            else:
+                img_filtered_annotations[key] = ann_info[key]
+        return img_filtered_annotations
+
     def _show_ins_var(self, old_labels: np.ndarray,
                       new_labels: torch.Tensor) -> None:
         """Show variation of the number of instances before and after through
@@ -356,55 +405,6 @@ class Det3DDataset(BaseDataset):
         print_log(
             'The number of instances per category after and before '
             f'through pipeline:\n{table.table}', 'current')
-
-    def prepare_data(self, index: int) -> Union[dict, None]:
-        """Data preparation for both training and testing stage.
-
-        Called by `__getitem__`  of dataset.
-
-        Args:
-            index (int): Index for accessing the target data.
-
-        Returns:
-            dict or None: Data dict of the corresponding index.
-        """
-        ori_input_dict = self.get_data_info(index)
-
-        # deepcopy here to avoid inplace modification in pipeline.
-        input_dict = copy.deepcopy(ori_input_dict)
-
-        # box_type_3d (str): 3D box type.
-        input_dict['box_type_3d'] = self.box_type_3d
-        # box_mode_3d (str): 3D box mode.
-        input_dict['box_mode_3d'] = self.box_mode_3d
-
-        # pre-pipline return None to random another in `__getitem__`
-        if not self.test_mode and self.filter_empty_gt:
-            if len(input_dict['ann_info']['gt_labels_3d']) == 0:
-                return None
-
-        example = self.pipeline(input_dict)
-
-        if not self.test_mode and self.filter_empty_gt:
-            # after pipeline drop the example with empty annotations
-            # return None to random another in `__getitem__`
-            if example is None or len(
-                    example['data_samples'].gt_instances_3d.labels_3d) == 0:
-                return None
-
-        if self.show_ins_var:
-            if 'ann_info' in ori_input_dict:
-                self._show_ins_var(
-                    ori_input_dict['ann_info']['gt_labels_3d'],
-                    example['data_samples'].gt_instances_3d.labels_3d)
-            else:
-                print_log(
-                    "'ann_info' is not in the input dict. It's probably that "
-                    'the data is not in training mode',
-                    'current',
-                    level=30)
-
-        return example
 
     def get_cat_ids(self, idx: int) -> Set[int]:
         """Get category ids by index. Dataset wrapped by ClassBalancedDataset

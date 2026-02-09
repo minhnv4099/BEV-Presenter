@@ -249,7 +249,8 @@ class BaseAttention(nn.Module):
             query,
             key,
             value,
-            query_pos, key_pos,
+            # query_pos,
+            # key_pos,
             attn_mask=attn_mask,
             head_mask=head_mask,
             **kwargs
@@ -264,7 +265,7 @@ class BaseAttention(nn.Module):
 
 @MODELS.register_module()
 class BaseFeedForward(nn.Module):
-    def __init__(self, config, **kwargs):
+    def __init__(self, config: Optional[BaseTransformerConfig] = None, **kwargs):
         super().__init__()
         config = config or BaseTransformerConfig()
 

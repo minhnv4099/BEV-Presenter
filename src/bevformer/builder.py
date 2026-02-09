@@ -21,7 +21,9 @@ from src.registry import (
     BBOX_CODERS,
     MATCH_COST,
     LOSSES,
-    DETECTORS
+    DETECTORS,
+    PIPELINES,
+    DATASETS
 )
 
 logger = getLogger(__name__)
@@ -45,9 +47,6 @@ def _build_with_fallback(
     """
     def _build_by_main():
         try:
-            print(main_registry.get("BEVFormer"))
-            print(main_registry)
-
             _obj = main_registry.build(cfg=cfg, default_args=default_args)
             warnings.warn(f"Built object of {cfg['type']!r} by main registry {main_registry.name!r}.")
             return _obj
@@ -63,7 +62,7 @@ def _build_with_fallback(
             warnings.warn(f"Built object of {cfg['type']!r} by fallback registry {fallback_registry.name!r}.")
             return _obj
         except Exception as e:
-            traceback.print_last()
+            traceback.print_exc()
             logger.info(f"Failed build object of {cfg['type']!r} by fallback registry {fallback_registry.name!r}.")
         return None
 
@@ -110,3 +109,11 @@ def build_loss(cfg: ConfigType, default_args=None):
 def build_positional_encoding(cfg: ConfigType, default_args=None):
     """Builder for Position Encoding."""
     return _build_with_fallback(cfg, MODELS, POSITION_ENCODINGS, default_args)
+
+
+def build_compose_component(cfg: ConfigType, default_args=None):
+    return _build_with_fallback(cfg, PIPELINES, PIPELINES, default_args)
+
+
+def build_dataset(cfg: ConfigType, default_args=None):
+    return _build_with_fallback(cfg, DATASETS, None, default_args, main_first=True)

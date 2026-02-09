@@ -112,12 +112,14 @@ class HungarianAssigner3D(BaseAssigner):
         cls_cost = self.cls_cost(cls_pred, gt_labels)
         # regression L1 cost
        
-        normalized_gt_bboxes = normalize_bbox(gt_bboxes, self.pc_range)
+        normalized_gt_bboxes = normalize_bbox(gt_bboxes)
     
         reg_cost = self.reg_cost(bbox_pred[:, :8], normalized_gt_bboxes[:, :8])
       
         # weighted sum of above two costs
         cost = cls_cost + reg_cost
+        # NOTE: fake data to avoid nan
+        cost[...] = 0.1
         
         # 3. do Hungarian matching on CPU using linear_sum_assignment
         cost = cost.detach().cpu()

@@ -2,17 +2,22 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
+import glob
+import numpy as np
 import torch
-import inspect
-from src.registry import MODELS
+from mmengine.config import ConfigDict
 from src.bevformer.builder import (
     build_config,
     build_head,
     build_detector,
+    build_dataset
 )
+from src.utils.fileio import dump
+from torch.utils.data import DataLoader
 from src.bevformer.models.utils.bricks import build_transformer_block
 from src.bevformer.configs.bevformer_tiny_test import encoder as encoder_cfg
-from src.bevformer.configs.bevformer_tiny_test import model as detector_cfg
+from src.bevformer.configs.bevformer_tiny_test import model as model_cfg
+from src.bevformer.configs.bevformer_tiny_test import data as data_cfg
 
 
 def debug_reference_points():
@@ -81,10 +86,58 @@ def debug_flow():
     # decoder = build_transformer_block(decoder_cfg)
 
 
-def main2():
-    model = build_detector(detector_cfg)
-    print(model)
+def create_dummy_img_metas(bs=2, num_cam=6, H=224, W=224):
+    img_metas = []
+
+    for b in range(bs):
+        meta = {}
+
+        # 1. lidar2img: (num_cam, 4, 4)
+        lidar2img = []
+        for _ in range(num_cam):
+            mat = np.eye(4, dtype=np.float32)
+            lidar2img.append(mat)
+        meta['lidar2img'] = np.stack(lidar2img, axis=0).tolist()
+
+        # 2. img_shape: list per camera
+        meta['img_shape'] = [(H, W, 3) for _ in range(num_cam)]
+        meta['ori_shape'] = [(H, W, 3) for _ in range(num_cam)]
+        meta['pad_shape'] = [(H, W, 3) for _ in range(num_cam)]
+
+        # 3. pc_range (BEVFormer default nuScenes)
+        meta['pc_range'] = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+        # 4. scene_token
+        meta['scene_token'] = f"scene_dummy_{b}"
+
+        # 5. prev_bev_exists (cho temporal)
+        meta['prev_bev_exists'] = True
+
+        # 6. can_bus (ego pose: x, y, z, roll, pitch, yaw,...)
+        # BEVFormer chỉ quan tâm [:3] và [-1]
+        can_bus = np.zeros(18, dtype=np.float32).tolist()
+        can_bus[:3] = np.array([0.0, 0.0, 0.0])  # position
+        can_bus[-1] = 0.0  # yaw angle
+        meta['can_bus'] = can_bus
+
+        img_metas.append(meta)
+
+    return img_metas
+
+
+def main():
+    from src.datasets.builder import build_dataloader
+
+    data_config = ConfigDict(data_cfg)
+    detector_cfg = ConfigDict(model_cfg)
+
+    dataset = build_dataset(data_config.train)
+    detector = build_detector(detector_cfg)
+
+    sample = dataset[10]
+    outs = detector(**sample)
+    print(outs)
 
 
 if __name__ == "__main__":
-    debug_flow()
+    main()

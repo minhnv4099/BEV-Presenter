@@ -2,16 +2,17 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
-from typing import Union, Sequence
+from typing import Union, Sequence, Dict, Optional, Tuple, List
 import torch
 import numpy as np
 from src.registry import PIPELINES
 from src.structures.data_container import DataContainer as DC
 from mmcv.transforms.formatting import to_tensor
+from .base_transform import BaseTransform
 
 
 @PIPELINES.register_module()
-class CustomDefaultFormatBundle3D:
+class CustomDefaultFormatBundle3D(BaseTransform):
     """Default formatting bundle.
     It simplifies the pipeline of formatting common fields for voxels,
     including "proposals", "gt_bboxes", "gt_labels", "gt_masks" and
@@ -27,7 +28,7 @@ class CustomDefaultFormatBundle3D:
     def __init__(self, class_names: list[str]):
         self.class_names = class_names
 
-    def __call__(self, results):
+    def transform(self, results):
         """Call function to transform and format common fields in results.
         Args:
             results (dict): Result dict contains the data to convert.
@@ -36,11 +37,23 @@ class CustomDefaultFormatBundle3D:
                 default bundle.
         """
         # Format 3D data
-        results = super(CustomDefaultFormatBundle3D, self).__call__(results, )
-        results['gt_map_masks'] = DC(
-            to_tensor(results['gt_map_masks']), stack=True)
+        # results = super(CustomDefaultFormatBundle3D, self).__call__(results, )
+        # results['gt_map_masks'] = DC(
+        #     to_tensor(results['gt_map_masks']), stack=True)
 
         return results
 
 
-DefaultFormatBundle3D = CustomDefaultFormatBundle3D
+@PIPELINES.register_module()
+class TypeConverter(BaseTransform):
+    def transform(self, results: Dict) -> Optional[Union[Dict, Tuple[List, List]]]:
+        imgs = results['img']
+        if isinstance(imgs, list):
+            results['img'] = np.array(imgs)
+
+        # gt_labels_3d = results['gt_labels_3d']
+        # if isinstance(results['gt_labels_3d'], np.ndarray):
+        #     results['gt_labels_3d'] = to_tensor(gt_labels_3d)
+
+        results['gt_labels_3d'] = torch.zeros(900, dtype=torch.long)
+        return results

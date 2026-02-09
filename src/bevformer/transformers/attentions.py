@@ -7,7 +7,8 @@ import torch.nn.functional as F
 
 
 def multi_scale_deformable_attn_pytorch(
-        value: torch.Tensor, value_spatial_shapes: torch.Tensor,
+        value: torch.Tensor,
+        value_spatial_shapes: torch.Tensor,
         sampling_locations: torch.Tensor,
         attention_weights: torch.Tensor) -> torch.Tensor:
     """CPU version of multi-scale deformable attention.
@@ -46,8 +47,7 @@ def multi_scale_deformable_attn_pytorch(
         # (bs, num_queries, num_heads, num_points, 2) ->
         # (bs, num_heads, num_queries, num_points, 2) ->
         # (bs*num_heads, num_queries, num_points, 2)
-        sampling_grid_l_ = sampling_grids[:, :, :,
-                                          level].transpose(1, 2).flatten(0, 1)
+        sampling_grid_l_ = sampling_grids[:, :, :, level].transpose(1, 2).flatten(0, 1)
         # (bs*num_heads, embed_dims, num_queries, num_points)
         sampling_value_l_ = F.grid_sample(
             value_l_,

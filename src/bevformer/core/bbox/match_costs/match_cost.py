@@ -4,12 +4,15 @@
 #  Modified by Minh Nguyen
 # ---------------------------------------------
 import torch
-import mmcv
 from src.registry import MATCH_COST
 from src.bevformer.models.losses import FocalLoss
 from src.bevformer.models.utils.weighted import weighted_loss
 
-MATCH_COST.register_module("FocalLossCost", module=FocalLoss)
+
+@MATCH_COST.register_module()
+class FocalCost(FocalLoss):
+    def __init__(self, weight: float = 1., **kwargs):
+        super().__init__(loss_weight=weight, **kwargs)
 
 
 @MATCH_COST.register_module()

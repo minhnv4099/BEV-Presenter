@@ -7,14 +7,14 @@ import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from mmengine.fileio import load
 from nuscenes.eval.common.utils import quaternion_yaw, Quaternion
 
 from src.structures.data_container import DataContainer as DC
 from src.registry import DATASETS
-from src.structures.bbox_3d import LiDARInstance3DBoxes, DepthInstance3DBoxes, CameraInstance3DBoxes
+from src.structures.bbox_3d import LiDARInstance3DBoxes, CameraInstance3DBoxes
 from src.structures.bbox_3d.utils import get_box_type
 from src.utils.logging import getLogger
+from src.utils.fileio import load
 from .nuscnes_eval import NuScenesEval_custom
 from .det3d_dataset import Det3DDataset
 from .compose import Compose
@@ -134,6 +134,7 @@ class CustomNuScenesDataset(Dataset):
             filter_cfg: Optional[dict] = None,
             indices: Optional[Union[int, Sequence[int]]] = None,
             serialize_data: bool = True,
+            debug_pipeline: bool = False,
             modality: dict = dict(use_lidar=False, use_camera=True),
             pipeline: List[Union[dict, Callable]] = [],
             test_mode: bool = False,
@@ -146,18 +147,23 @@ class CustomNuScenesDataset(Dataset):
     ):
         super().__init__()
         self.data_root = data_root
-        self.data_infos = load(ann_file)['infos']
+        self.ann_file = ann_file
+        self.data_infos = self.load_data_infos()
+
+        self.pipeline = Compose(pipeline, debug=debug_pipeline)
         self.modality = modality
-        self.pipeline = Compose(pipeline)
         self.queue_length = queue_length
         self.overlap_test = overlap_test
         self.bev_size = bev_size
         self.test_mode = test_mode
+
         assert load_type in ('frame_based', 'mv_image_based', 'fov_image_based')
         self.load_type = load_type
         self.with_velocity = with_velocity
-
         self.box_type_3d, self.box_mode_3d = get_box_type(box_type_3d)
+
+    def load_data_infos(self):
+        return load(self.ann_file)['infos']
 
     def __len__(self):
         return len(self.data_infos)
@@ -173,7 +179,7 @@ class CustomNuScenesDataset(Dataset):
         while True:
             data = self.prepare_train_data(idx)
             if data is None:
-                idx = self._rand_another()
+                idx = np.random.randint(0, len(self))
                 continue
 
             return data
@@ -207,15 +213,14 @@ class CustomNuScenesDataset(Dataset):
                 return None
 
             # self.pre_pipeline(input_dict)
-            example = input_dict
-            # example = self.pipeline(input_dict)
+            # example = input_dict
+            example = self.pipeline(input_dict)
 
             # if self.filter_empty_gt and (example is None or ~(example['gt_labels_3d']._data != -1).any()):
             #     return None
             queue.append(example)
 
-        return queue
-        # return self.union2one(queue)
+        return self.union2one(queue)
 
     def get_data_info(self, index: int):
         """Get data info according to the given index.
@@ -237,7 +242,6 @@ class CustomNuScenesDataset(Dataset):
                 - ann_info (dict): Annotation info.
         """
         data_info = self.data_infos[index]
-        # standard protocal modified from SECOND.Pytorch
         input_dict = dict(
             sample_idx=data_info['token'],
             pts_filename=data_info['lidar_path'],
@@ -320,7 +324,7 @@ class CustomNuScenesDataset(Dataset):
 
         gt_bboxes_3d = info['gt_boxes']
         gt_velocities = info['gt_velocity']
-        gt_names = info['gt_names']
+        ann_info['gt_labels_3d'] = info['gt_names']
 
         if self.with_velocity:
             # assert gt_bboxes_3d.shape[0] == gt_velocities.shape[0]
@@ -363,14 +367,24 @@ class CustomNuScenesDataset(Dataset):
 
         return ann_info
 
-    def union2one(self, queue):
-        imgs_list = [each['img'].data for each in queue]
+    def union2one(self, queue: list[dict]):
+        """Combine list of samples into dict.
+
+        Args:
+            queue (list[dict]): List of dict, each presents for one sample.
+        Returns:
+            A dictionary with keys
+
+            * `img`: Tensor of pixel values.
+            * `img_metas`: Dict of `n_queue` dict about sample metadata.
+            * `gt_bboxes_3d`:
+        """
         metas_map = {}
         prev_scene_token = None
         prev_pos = None
         prev_angle = None
         for i, each in enumerate(queue):
-            metas_map[i] = each['img_metas'].data
+            metas_map[i] = each['img_metas'].data if isinstance(each['img_metas'], DC) else each['img_metas']
             if metas_map[i]['scene_token'] != prev_scene_token:
                 metas_map[i]['prev_bev_exists'] = False
                 prev_scene_token = metas_map[i]['scene_token']
@@ -386,10 +400,14 @@ class CustomNuScenesDataset(Dataset):
                 metas_map[i]['can_bus'][-1] -= prev_angle
                 prev_pos = copy.deepcopy(tmp_pos)
                 prev_angle = copy.deepcopy(tmp_angle)
-        queue[-1]['img'] = DC(torch.stack(imgs_list), cpu_only=False, stack=True)
-        queue[-1]['img_metas'] = DC(metas_map, cpu_only=True)
-        queue = queue[-1]
-        return queue
+
+        imgs_list = [torch.from_numpy(each['img']) for each in queue]
+        # still keep remaining keys 'gt_bboxes_3d', 'gt_labels_3d'
+        # combine img and img_meta
+        queue[-1]['img'] = torch.stack(imgs_list, dim=0).permute(0, 1, 4, 2, 3)
+        queue[-1]['img_metas'] = metas_map
+
+        return queue[-1]
 
     def _evaluate_single(self,
                          result_path,
@@ -590,8 +608,7 @@ class NuScenesDataset(Det3DDataset):
                 gt_velocities = ann_info['velocities']
                 nan_mask = np.isnan(gt_velocities[:, 0])
                 gt_velocities[nan_mask] = [0.0, 0.0]
-                gt_bboxes_3d = np.concatenate([gt_bboxes_3d, gt_velocities],
-                                              axis=-1)
+                gt_bboxes_3d = np.concatenate([gt_bboxes_3d, gt_velocities], axis=-1)
                 ann_info['gt_bboxes_3d'] = gt_bboxes_3d
         else:
             # empty instance
