@@ -9,6 +9,13 @@
 # less encoder layers: 6 -> 3
 # smaller input size: 1600*900 -> 800*450
 # multi-scale feautres -> single scale features (C5)
+# _base_ = [
+#     '../datasets/custom_nus-3d.py',
+#     '../_base_/default_runtime.py'
+# ]
+#
+# plugin = True
+# plugin_dir = ...
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53],
@@ -192,15 +199,15 @@ file_client_args = dict(backend='disk')
 train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),  # loading.py
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),  # loading.py
-    # dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),  # transform_3d.py
-    # dict(type='ObjectNameFilter', classes=class_names),  # transform_3d.py
+    dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),  # transform_3d.py
+    dict(type='ObjectNameFilter', classes=class_names),  # transform_3d.py
     dict(type='PhotoMetricDistortionMultiViewImage'),  # transform_3d.py
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),  # transform_3d.py
     dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),   # transform_3d.py
     dict(type='PadMultiViewImage', size_divisor=32),  # transform_3d.py
     dict(type='CustomDefaultFormatBundle3D', class_names=class_names),  # formating.py
     dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img']),   # transform_3d.py
-    dict(type='TypeConverter')  # formating.py
+    dict(type='TypeConverter', num_query=900)  # formating.py
 ]
 
 test_pipeline = [
@@ -263,10 +270,10 @@ data = dict(
 optimizer = dict(
     type='AdamW',
     lr=2e-4,
-    paramwise_cfg=dict(
-        custom_keys={
-            'img_backbone': dict(lr_mult=0.1),
-        }),
+    # paramwise_cfg=dict(
+    #     custom_keys={
+    #         'img_backbone': dict(lr_mult=0.1),
+    #     }),
     weight_decay=0.01)
 
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))

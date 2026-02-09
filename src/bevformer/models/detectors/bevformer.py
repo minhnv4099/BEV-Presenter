@@ -14,6 +14,7 @@ from src.bevformer.models.utils.grid_mask import GridMask
 from src.bevformer.models.utils.bbox import bbox3d2result
 from src.utils.logging import getLogger
 from src.utils.fp16_utils import auto_fp16
+from src.utils.list_utils import construct_list
 from .mvx_two_stage import MVXTwoStageDetector
 
 if TYPE_CHECKING:
@@ -121,7 +122,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
         gt_bboxes_ignore: Optional[list[torch.Tensor]] = None,
         img_depth=None,
         img_mask=None,
-        batch_size: int = 3,
+        batch_size: int = 1,
     ):
         """Forward training function.
 
@@ -150,9 +151,10 @@ class BEVFormerDetector(MVXTwoStageDetector):
         """
         if len(img.shape) == 5:
             img = torch.stack([img] * batch_size, dim=0)
-            img_metas = [img_metas] * batch_size
-            gt_bboxes_3d = [gt_bboxes_3d] * batch_size
-            gt_labels_3d = [gt_labels_3d] * batch_size
+
+        img_metas = construct_list(img_metas, batch_size)
+        gt_bboxes_3d = construct_list(gt_bboxes_3d, batch_size)
+        gt_labels_3d = construct_list(gt_labels_3d, batch_size)
 
         len_queue = img.size(1)
         # shape (bs, n_queue-1, n_cam, C, H, W)
@@ -303,7 +305,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
             gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`]): Ground truth
                 boxes for each sample.
             gt_labels_3d (list[torch.Tensor]): Ground truth labels for
-                boxes of each sampole
+                boxes of each sample.
             img_metas (list[dict]): Meta information of samples.
             gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
                 boxes to be ignored. Defaults to None.

@@ -11,7 +11,7 @@ from src.utils.image import imshow
 
 @PIPELINES.register_module()
 class LoadMultiViewImageFromFiles(BaseTransform):
-    """Load multi channel images from a list of separate channel files.
+    """Load multi-channel images from a list of separate channel files.
 
     Expects results['img_filename'] to be a list of filenames.
 
@@ -211,11 +211,11 @@ class LoadAnnotations3D(BaseTransform, LoadAnnotations):
                 semantic segmentation annotations.
         """
         results = LoadAnnotations.transform(self, results)
+        if results is None:
+            return None
 
         if self.with_bbox_3d:
             results = self._load_bboxes_3d(results)
-            if results is None:
-                return None
         if self.with_label_3d:
             results = self._load_labels_3d(results)
         if self.with_mask_3d:

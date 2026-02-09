@@ -127,22 +127,16 @@ class CustomNuScenesDataset(Dataset):
             queue_length: int = 4,
             bev_size: tuple[int] = (200, 200),
             overlap_test: bool = False,
-            ann_file: Optional[str] = '',
-            metainfo: Optional[dict] = None,
-            data_root: Optional[str] = '',
-            data_prefix: dict = dict(img_path=''),
-            filter_cfg: Optional[dict] = None,
-            indices: Optional[Union[int, Sequence[int]]] = None,
-            serialize_data: bool = True,
+            ann_file: Optional[str] = None,
+            data_root: Optional[str] = None,
             debug_pipeline: bool = False,
             modality: dict = dict(use_lidar=False, use_camera=True),
-            pipeline: List[Union[dict, Callable]] = [],
+            pipeline: List[Union[dict, Callable]] = (),
             test_mode: bool = False,
-            lazy_init: bool = False,
-            max_refetch: int = 1000,
             with_velocity: bool = True,
             load_type: str = 'fov_image_based',
             box_type_3d: str = "CAMERA",
+            classes: list[str] = None,
             *args, **kwargs
     ):
         super().__init__()
@@ -156,6 +150,16 @@ class CustomNuScenesDataset(Dataset):
         self.overlap_test = overlap_test
         self.bev_size = bev_size
         self.test_mode = test_mode
+        self.class_names = classes
+
+        self.name2idx = {
+            name: idx
+            for idx, name in enumerate(classes)
+        }
+        self.idx2name = {
+            idx: name
+            for idx, name in self.name2idx.items()
+        }
 
         assert load_type in ('frame_based', 'mv_image_based', 'fov_image_based')
         self.load_type = load_type
@@ -184,14 +188,6 @@ class CustomNuScenesDataset(Dataset):
 
             return data
 
-    def _rand_another(self) -> int:
-        """Get random index.
-
-        Returns:
-            int: Random index from 0 to ``len(self)-1``
-        """
-        return np.random.randint(0, len(self))
-
     def prepare_train_data(self, index: int):
         """
         Training data preparation.
@@ -213,7 +209,6 @@ class CustomNuScenesDataset(Dataset):
                 return None
 
             # self.pre_pipeline(input_dict)
-            # example = input_dict
             example = self.pipeline(input_dict)
 
             # if self.filter_empty_gt and (example is None or ~(example['gt_labels_3d']._data != -1).any()):
@@ -243,16 +238,16 @@ class CustomNuScenesDataset(Dataset):
         """
         data_info = self.data_infos[index]
         input_dict = dict(
-            sample_idx=data_info['token'],
             pts_filename=data_info['lidar_path'],
-            sweeps=data_info['sweeps'],
-            ego2global_translation=data_info['ego2global_translation'],
-            ego2global_rotation=data_info['ego2global_rotation'],
+            sample_idx=data_info['token'],
             prev_idx=data_info['prev'],
             next_idx=data_info['next'],
-            scene_token=data_info['scene_token'],
             can_bus=data_info['can_bus'],
             frame_idx=data_info['frame_idx'],
+            sweeps=data_info['sweeps'],
+            scene_token=data_info['scene_token'],
+            ego2global_translation=data_info['ego2global_translation'],
+            ego2global_rotation=data_info['ego2global_rotation'],
             timestamp=data_info['timestamp'] / 1e6,
         )
 
@@ -324,10 +319,11 @@ class CustomNuScenesDataset(Dataset):
 
         gt_bboxes_3d = info['gt_boxes']
         gt_velocities = info['gt_velocity']
-        ann_info['gt_labels_3d'] = info['gt_names']
+        # TODO: convert string -> index
+        gt_labels_3d = [self.name2idx.get(name, 1) for name in info['gt_names']]
+        ann_info['gt_labels_3d'] = np.array(gt_labels_3d)
 
         if self.with_velocity:
-            # assert gt_bboxes_3d.shape[0] == gt_velocities.shape[0]
             nan_mask = np.isnan(gt_velocities[:, 0])
             gt_velocities[nan_mask] = [0.0, 0.0]
             gt_bboxes_3d = np.concatenate([gt_bboxes_3d, gt_velocities], axis=-1)
@@ -366,6 +362,27 @@ class CustomNuScenesDataset(Dataset):
         ann_info['gt_bboxes_3d'] = gt_bboxes_3d
 
         return ann_info
+
+    def _filter_with_mask(self, ann_info: dict) -> dict:
+        """Remove annotations that do not need to be cared.
+
+        Args:
+            ann_info (dict): Dict of annotation infos.
+
+        Returns:
+            dict: Annotations after filtering.
+        """
+        filtered_annotations = {}
+        if self.use_valid_flag:
+            filter_mask = ann_info['bbox_3d_isvalid']
+        else:
+            filter_mask = ann_info['num_lidar_pts'] > 0
+        for key in ann_info.keys():
+            if key != 'instances':
+                filtered_annotations[key] = (ann_info[key][filter_mask])
+            else:
+                filtered_annotations[key] = ann_info[key]
+        return filtered_annotations
 
     def union2one(self, queue: list[dict]):
         """Combine list of samples into dict.

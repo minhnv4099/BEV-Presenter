@@ -23,7 +23,8 @@ from src.registry import (
     LOSSES,
     DETECTORS,
     PIPELINES,
-    DATASETS
+    DATASETS,
+    OPTIMIZERS
 )
 
 logger = getLogger(__name__)
@@ -117,3 +118,7 @@ def build_compose_component(cfg: ConfigType, default_args=None):
 
 def build_dataset(cfg: ConfigType, default_args=None):
     return _build_with_fallback(cfg, DATASETS, None, default_args, main_first=True)
+
+
+def build_optimizer(cfg: ConfigType, default_args=None):
+    return _build_with_fallback(cfg, OPTIMIZERS, OPTIMIZERS, default_args, main_first=True)

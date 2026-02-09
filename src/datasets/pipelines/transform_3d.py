@@ -4,9 +4,11 @@ from numpy import random
 import mmcv
 from src.registry import PIPELINES
 from src.structures.data_container import DataContainer as DC
-from src.structures.bbox_3d import LiDARInstance3DBoxes, CameraInstance3DBoxes, DepthInstance3DBoxes
+from src.structures.bbox_3d import LiDARInstance3DBoxes, CameraInstance3DBoxes, DepthInstance3DBoxes, BaseInstance3DBoxes
 from .base_transform import BaseTransform
-from src.utils.image import imshow
+from src.utils.logging import getLogger
+
+logger = getLogger(__name__)
 
 
 @PIPELINES.register_module()
@@ -45,7 +47,7 @@ class ObjectRangeFilter(BaseTransform):
         elif isinstance(input_dict['gt_bboxes_3d'], CameraInstance3DBoxes):
             bev_range = self.pcd_range[[0, 2, 3, 5]]
 
-        gt_bboxes_3d = input_dict['gt_bboxes_3d']
+        gt_bboxes_3d: BaseInstance3DBoxes = input_dict['gt_bboxes_3d']
         gt_labels_3d = input_dict['gt_labels_3d']
         mask = gt_bboxes_3d.in_range_bev(bev_range)
         gt_bboxes_3d = gt_bboxes_3d[mask]
@@ -257,7 +259,7 @@ class RandomScaleImageMultiViewImage(BaseTransform):
         scales
     """
 
-    def __init__(self, scales=[]):
+    def __init__(self, scales=()):
         self.scales = scales
         assert len(self.scales) == 1
 

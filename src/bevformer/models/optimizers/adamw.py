@@ -10,6 +10,9 @@ except:
 import torch
 from torch.optim.optimizer import Optimizer
 from src.registry import OPTIMIZERS
+from torch.optim import AdamW
+
+OPTIMIZERS.register_module("AdamW", module=AdamW)
 
 
 @OPTIMIZERS.register_module()
@@ -40,8 +43,14 @@ class AdamW2(Optimizer):
         https://openreview.net/forum?id=ryQu7f-RZ
     """
 
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=1e-2, amsgrad=False):
+    def __init__(self,
+                 params,
+                 lr: float = 1e-3,
+                 betas: tuple[float, float] = (0.9, 0.999),
+                 eps: float = 1e-8,
+                 weight_decay: float = 1e-2,
+                 amsgrad: bool = False,
+                 **kwargs):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
@@ -52,6 +61,7 @@ class AdamW2(Optimizer):
             raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
         if not 0.0 <= weight_decay:
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         weight_decay=weight_decay, amsgrad=amsgrad)
         super(AdamW2, self).__init__(params, defaults)
@@ -114,23 +124,25 @@ class AdamW2(Optimizer):
                 if amsgrad:
                     max_exp_avg_sqs.append(state['max_exp_avg_sq'])
 
-
                 # update the steps for each param group update
                 state['step'] += 1
                 # record the step after step update
                 state_steps.append(state['step'])
 
-            F.adamw(params_with_grad,
-                    grads,
-                    exp_avgs,
-                    exp_avg_sqs,
-                    max_exp_avg_sqs,
-                    state_steps,
-                    amsgrad,
-                    beta1,
-                    beta2,
-                    group['lr'],
-                    group['weight_decay'],
-                    group['eps'])
+            F.adamw(
+                params=params_with_grad,
+                grads=grads,
+                exp_avgs=exp_avgs,
+                exp_avg_sqs=exp_avg_sqs,
+                max_exp_avg_sqs=max_exp_avg_sqs,
+                state_steps=state_steps,
+                amsgrad=amsgrad,
+                beta1=beta1,
+                beta2=beta2,
+                lr=group['lr'],
+                weight_decay=group['weight_decay'],
+                eps=group['eps'],
+                maximize=True
+            )
 
         return loss

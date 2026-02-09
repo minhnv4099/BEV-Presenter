@@ -46,14 +46,15 @@ class CustomDefaultFormatBundle3D(BaseTransform):
 
 @PIPELINES.register_module()
 class TypeConverter(BaseTransform):
+    def __init__(self, num_query: int):
+        self.num_query = num_query
+
     def transform(self, results: Dict) -> Optional[Union[Dict, Tuple[List, List]]]:
-        imgs = results['img']
-        if isinstance(imgs, list):
-            results['img'] = np.array(imgs)
+        results['img'] = np.array(results['img'])
 
-        # gt_labels_3d = results['gt_labels_3d']
-        # if isinstance(results['gt_labels_3d'], np.ndarray):
-        #     results['gt_labels_3d'] = to_tensor(gt_labels_3d)
+        m = results['gt_labels_3d'].shape[0]
+        gt_labels_3d = np.array([1] * self.num_query)
+        gt_labels_3d[:m] = results['gt_labels_3d']
+        results['gt_labels_3d'] = torch.as_tensor(gt_labels_3d, dtype=torch.long)
 
-        results['gt_labels_3d'] = torch.zeros(900, dtype=torch.long)
         return results

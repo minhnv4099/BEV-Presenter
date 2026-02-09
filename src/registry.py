@@ -84,17 +84,22 @@ WEIGHT_INITIALIZERS = Registry(
 
 # manage all kinds of transformer components
 ATTENTIONS = Registry(
-    'attention', scope='attention', parent=MODELS, locations=[f'{PACKAGE}.models'])
+    'attention', scope='attention', parent=MODELS,
+    locations=[f'{PACKAGE}.models'])
+TRANSFORMER_LAYERS = Registry(
+    "transformer_layer", scope="transformer_layer", parent=MODELS,
+    locations=[f'{PACKAGE}.models'])
+TRANSFORMER_BLOCKS = Registry(
+    "transformer_block", scope="transformer_block", parent=MODELS,
+    locations=[f'{PACKAGE}.models'])
+TRANSFORMERS = Registry(
+    "transformer", scope="transformer", parent=MODELS,
+    locations=[f'{PACKAGE}.models'])
 POSITION_ENCODINGS = Registry(
     'position_encoding', scope='position_encoding', parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.layers'])
-TRANSFORMER_LAYERS = Registry(
-    "transformer_layer", scope="transformer_layer", parent=MODELS, locations=[f'{PACKAGE}.models'])
-TRANSFORMER_BLOCKS = Registry(
-    "transformer_block", scope="transformer_block", parent=MODELS, locations=[f'{PACKAGE}.models'])
-TRANSFORMERS = Registry(
-    "transformer", scope="transformer", parent=MODELS, locations=[f'{PACKAGE}.models'])
 
+# manage all kinds of extractors
 BACKBONES = Registry(
     "backbone", scope="backbone", parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.backbones'])
@@ -105,6 +110,8 @@ NECKS = Registry(
 # manage all kinds of heads
 HEADS = Registry(
     "head", scope="head", parent=MODELS, locations=[f'{PACKAGE}.models'])
+
+# manage all kinds of detectors
 DETECTORS = Registry(
     "detector", scope="detector", parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.detectors'])
@@ -112,28 +119,27 @@ DETECTORS = Registry(
 # manage task-specific modules like anchor generators and box coders
 TASK_UTILS = Registry(
     'task util', parent=MMENGINE_TASK_UTILS, locations=[f'{PACKAGE}.models'])
-MATCH_COST = Registry(
-    "match_cost", scope="match_cost", parent=TASK_UTILS,
-    locations=[f'{PACKAGE}.core.bbox'])
 BBOX_CODERS = Registry(
     "bbox_coder", scope="bbox_coder", parent=TASK_UTILS,
     locations=[f'{PACKAGE}.core.bbox'])
+BBOX_SAMPLERS = Registry(
+    "bbox_sampler", scope="bbox_sampler", parent=TASK_UTILS,
+    locations=[f'src.bevformer.core.bbox.samplers'])
 ASSIGNERS = Registry(
     "assigner", scope="assigner", parent=TASK_UTILS,
     locations=[f'{PACKAGE}.core.bbox'])
 LOSSES = Registry(
     "loss", scope="loss", parent=MODELS,
     locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.losses'])
-BBOX_SAMPLERS = Registry(
-    "bbox_sampler", scope="bbox_sampler", parent=TASK_UTILS,
-    locations=[f'src.bevformer.core.bbox.samplers'])
+MATCH_COST = Registry(
+    "match_cost", scope="match_cost", parent=TASK_UTILS,
+    locations=[f'{PACKAGE}.core.bbox'])
 
 # mangage all kinds of optimizers like `SGD` and `Adam`
 OPTIMIZERS = Registry(
-    'optimizer',
-    parent=MMENGINE_OPTIMIZERS,
+    'optimizer', parent=MMENGINE_OPTIMIZERS,
     # TODO: update the location when {PACKAGE} has its own optimizer
-    locations=[f'{PACKAGE}.engine'])
+    locations=[f'src.bevformer.models.optimizers'])
 # manage optimizer wrapper
 OPTIM_WRAPPERS = Registry(
     'optim wrapper',
@@ -145,7 +151,7 @@ OPTIM_WRAPPER_CONSTRUCTORS = Registry(
     'optimizer wrapper constructor',
     parent=MMENGINE_OPTIM_WRAPPER_CONSTRUCTORS,
     # TODO: update the location when {PACKAGE} has its own optimizer
-    locations=[f'{PACKAGE}.engine'])
+    locations=[f'src.bevformer.models.optimizers'])
 # mangage all kinds of parameter schedulers like `MultiStepLR`
 PARAM_SCHEDULERS = Registry(
     'parameter scheduler',
