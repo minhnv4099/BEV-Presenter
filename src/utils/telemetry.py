@@ -21,14 +21,8 @@ def timing(scope: Optional[str] = None):
             result = func(*args, **kwargs)
             elapsed_time = int(time() - start_time)
 
-            module = inspect.getmodule(sys._getframe())
-            # print(inspect.getmodule(sys._getframe(0)))
-            # print(inspect.getmodule(sys._getframe(1)))
-            # print(inspect.getmodule(sys._getframe(2)))
-            # print(inspect.getmodule(sys._getframe(3)))
-            # print(inspect.getmodule(sys._getframe(4)))
             where = func.__name__ if scope is None else scope + '.' + func.__name__
-            logger.info(f"{where!r} executed in {elapsed_time}s.")
+            # logger.info(f"{where!r} executed in {elapsed_time}s.")
 
             return result
         return timing_wrapper

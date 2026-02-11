@@ -49,22 +49,22 @@ def _build_with_fallback(
     def _build_by_main():
         try:
             _obj = main_registry.build(cfg=cfg, default_args=default_args)
-            warnings.warn(f"Built object of {cfg['type']!r} by main registry {main_registry.name!r}.")
+            logger.info(f"Built object of {cfg['type']!r} by main registry {main_registry.name!r}.")
             return _obj
         except KeyError as e:
             traceback.print_exc(5)
-            logger.info(f"Failed build object of {cfg['type']!r} by main registry {main_registry.name!r}.")
+            logger.error(f"Failed build object of {cfg['type']!r} by main registry {main_registry.name!r}.")
 
         return None
 
     def _build_by_fallback():
         try:
             _obj = fallback_registry.build(cfg, default_args=default_args)
-            warnings.warn(f"Built object of {cfg['type']!r} by fallback registry {fallback_registry.name!r}.")
+            logger.info(f"Built object of {cfg['type']!r} by fallback registry {fallback_registry.name!r}.")
             return _obj
         except Exception as e:
             traceback.print_exc()
-            logger.info(f"Failed build object of {cfg['type']!r} by fallback registry {fallback_registry.name!r}.")
+            logger.error(f"Failed build object of {cfg['type']!r} by fallback registry {fallback_registry.name!r}.")
         return None
 
     if main_first:

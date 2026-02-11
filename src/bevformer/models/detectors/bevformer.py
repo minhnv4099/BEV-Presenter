@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import copy
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Literal, Union, Dict
 import torch
+from mmengine.model import BaseModel
 
 from src.registry import MODELS, DETECTORS
 from src.bevformer.models.utils.grid_mask import GridMask
@@ -57,7 +58,10 @@ class BEVFormerDetector(MVXTwoStageDetector):
         data_preprocessor: Optional[dict] = None,
         **kwargs
     ):
-        super().__init__(
+        BaseModel.__init__(self, data_preprocessor, init_cfg)
+        logger.info(self.data_preprocessor)
+        MVXTwoStageDetector.__init__(
+            self,
             pts_voxel_encoder=pts_voxel_encoder,
             pts_middle_encoder=pts_middle_encoder,
             pts_fusion_layer=pts_fusion_layer,
@@ -91,7 +95,13 @@ class BEVFormerDetector(MVXTwoStageDetector):
             'prev_angle': 0,
         }
 
-    def forward(self, *args, return_loss: bool = True, **kwargs):
+    def forward(
+        self,
+        *args,
+        return_loss: bool = True,
+        mode: Literal['loss', 'predict', 'val'] = 'loss',
+        **kwargs
+    ):
         """Calls either forward_train or forward_test depending on whether
         `return_loss=True`.
 
@@ -104,7 +114,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
         list[list[dict]]), with the outer list indicating test time
         augmentations.
         """
-        if return_loss:
+        if mode == 'loss':
             return self.forward_train(*args, **kwargs)
         else:
             return self.forward_test(*args, **kwargs)
@@ -355,7 +365,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
             img_metas[0][0]['can_bus'][:3] = 0
 
         new_prev_bev, bbox_results = self.simple_test(
-            img_metas[0], img[0], prev_bev=self.prev_frame_info['prev_bev'], **kwargs)
+            img[0], img_metas[0], prev_bev=self.prev_frame_info['prev_bev'], **kwargs)
         # During inference, we save the BEV features and ego motion of each timestamp.
         self.prev_frame_info['prev_pos'] = tmp_pos
         self.prev_frame_info['prev_angle'] = tmp_angle
@@ -387,8 +397,11 @@ class BEVFormerDetector(MVXTwoStageDetector):
         return new_prev_bev, bbox_pts
 
     def simple_test_pts(
-        self, feature_maps: list[torch.Tensor],
-        img_metas, prev_bev=None, rescale=False
+        self,
+        feature_maps: list[torch.Tensor],
+        img_metas,
+        prev_bev=None,
+        rescale=False
     ) -> tuple[torch.Tensor, list[list]]:
         """Simple predict results of bev embeddings and bounding boxes.
 

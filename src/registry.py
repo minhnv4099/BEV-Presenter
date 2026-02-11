@@ -50,7 +50,7 @@ LOOPS = Registry(
     locations=[f'{PACKAGE}.engine'])
 # manage all kinds of hooks like `CheckpointHook`
 HOOKS = Registry(
-    'hook', parent=MMENGINE_HOOKS, locations=[f'{PACKAGE}.engine.hooks'])
+    'hook', parent=MMENGINE_HOOKS)
 
 # manage data-related modules
 DATASETS = Registry(

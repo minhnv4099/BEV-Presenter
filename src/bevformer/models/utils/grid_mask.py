@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from PIL import Image
 from src.utils.fp16_utils import force_fp32, auto_fp16
+from src.device import get_device
 
 
 class Grid(object):
@@ -59,7 +60,7 @@ class Grid(object):
 
         mask = mask.expand_as(img)
         if self.offset:
-            offset = torch.from_numpy(2 * (np.random.rand(h, w) - 0.5)).float()
+            offset = torch.from_numpy(2 * (np.random.rand(h, w) - 0.5)).float().to(get_device())
             offset = (1 - mask) * offset
             img = img * mask + offset
         else:
@@ -119,7 +120,7 @@ class GridMask(nn.Module):
             mask = 1 - mask
         mask = mask.expand_as(x)
         if self.offset:
-            offset = torch.from_numpy(2 * (np.random.rand(h, w) - 0.5)).to(x.dtype).cuda()
+            offset = torch.from_numpy(2 * (np.random.rand(h, w) - 0.5)).to(x.dtype).to(get_device())
             x = x * mask + offset * (1 - mask)
         else:
             x = x * mask

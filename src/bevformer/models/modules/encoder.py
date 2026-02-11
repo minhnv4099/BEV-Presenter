@@ -306,7 +306,6 @@ class BEVFormerEncoder(TransformerLayerSequence):
         output = bev_query
         intermediate = []
 
-        logger.info("Get 3D reference points in space used for spatial-cross attention (SCA)")
         # 3d reference point in space used for spatial-cross attention (SCA)
         ref_3d = self.get_reference_points(
             H=bev_h, W=bev_w, Z=self.pc_range[5] - self.pc_range[2],
@@ -314,13 +313,11 @@ class BEVFormerEncoder(TransformerLayerSequence):
             dim='3d', bs=bev_query.size(1),  
             device=bev_query.device, dtype=bev_query.dtype)
         
-        logger.info("Get 2D reference points in bev plane used for temporal-self attention (TSA)")
         # 2d reference points in bev plane used for temporal-self attention (TSA)
         ref_2d = self.get_reference_points(
             bev_h, bev_w, dim='2d', bs=bev_query.size(1), 
             device=bev_query.device, dtype=bev_query.dtype)
 
-        logger.info("Get real location of reference points on camera views.")
         reference_points_cam, bev_mask = self.point_sampling(
             reference_points=ref_3d,
             pc_range=self.pc_range,
@@ -335,7 +332,6 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 
         # bug: this code should be 'shift_ref_2d = ref_2d.clone()', we keep this bug for reproducing our results in paper.
         # align ref point 2d to match with previous bev instead of aligning previous bev. NOTE need to justify.
-        logger.info("Align BEV plane by 2D reference points.")
         shift_ref_2d = ref_2d.clone() + shift[:, None, None, :]
     
         # (num_query, bs, embed_dims) -> (bs, num_query, embed_dims)
@@ -551,7 +547,7 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
                     key_padding_mask=query_key_padding_mask,
                     spatial_shapes=torch.tensor(
                         [[bev_h, bev_w]], device=query.device),
-                    level_start_index=Tensor([0], device=query.device),
+                    level_start_index=torch.tensor([0], device=query.device),
                     **kwargs
                 )
                 attn_index += 1

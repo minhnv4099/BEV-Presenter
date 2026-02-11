@@ -9,7 +9,7 @@ from torch import Tensor
 
 from src.registry import MODELS, DETECTORS
 from mmengine.structures import InstanceData
-from mmengine.model import BaseModule
+from mmengine.model import BaseModel
 
 if TYPE_CHECKING:
     from mmdet3d.structures import Det3DDataSample
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 @MODELS.register_module()
 @DETECTORS.register_module()
-class MVXTwoStageDetector(BaseModule):
+class MVXTwoStageDetector(BaseModel):
     """Base class of Multi-modality VoxelNet.
 
     Args:
@@ -68,7 +68,7 @@ class MVXTwoStageDetector(BaseModule):
                  data_preprocessor: Optional[dict] = None,
                  **kwargs):
         super(MVXTwoStageDetector, self).__init__(
-            init_cfg=init_cfg)
+            init_cfg=init_cfg, data_preprocessor=data_preprocessor)
 
         if pts_voxel_encoder:
             self.pts_voxel_encoder = MODELS.build(pts_voxel_encoder)
