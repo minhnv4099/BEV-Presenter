@@ -1,13 +1,9 @@
-#
-#  Copyright (c) 2026
-#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
-#
 # nuScenes dev-kit.
 # Code written by Oscar Beijbom, Holger Caesar & Fong Whye Kit, 2020.
 
-import json
 import os
 import os.path as osp
+import json
 import sys
 import time
 from typing import Tuple, List, Iterable
@@ -15,15 +11,16 @@ from typing import Tuple, List, Iterable
 import numpy as np
 from matplotlib.axes import Axes
 from pyquaternion import Quaternion
-from src.utils.fileio import dump
-from src.utils.logging import getLogger
 
 from nuscenes.lidarseg.lidarseg_utils import get_stats
 from nuscenes.utils.data_classes import Box
 from nuscenes.utils.data_io import load_bin_file, panoptic_to_lidarseg
 from nuscenes.utils.geometry_utils import box_in_image, BoxVisibility
 from nuscenes.utils.map_mask import MapMask
-from nuscenes.utils.color_map import get_colormap
+
+from src.utils.fileio import dump
+from src.utils.logging import getLogger
+from .utils import get_colormap
 from .record_typing import SampleDataRecord
 from .nuscene_explorer import NuScenesExplorer
 
@@ -45,8 +42,7 @@ class CustomNuScenes:
                  dataroot: str = "data/nuscenes/v1.0-mini",
                  verbose: bool = True,
                  map_resolution: float = 0.1,
-                 save_reverse: bool = False
-                 ):
+                 save_reverse: bool = False):
         """
         Loads database and creates reverse indexes and shortcuts.
         Args:
@@ -129,11 +125,11 @@ class CustomNuScenes:
         if verbose:
             for table in self.table_names:
                 print("{} {},".format(len(getattr(self, table)), table))
-            logger.info("Done loading in {:.3f} seconds.\n======".format(time.time() - start_time))
+            logger.info("Done loading in {:.3f} seconds.=============".format(time.time() - start_time))
 
         # Make reverse indexes for common lookups.
-        self.__make_reverse_index__(verbose, save=save_reverse)
 
+        self.__make_reverse_index__(verbose, save_reverse=save_reverse)
         # Initialize NuScenesExplorer class.
         self.explorer = NuScenesExplorer(self)
 
@@ -142,7 +138,7 @@ class CustomNuScenes:
         """ Returns the folder where the tables are stored for the relevant version. """
         return osp.join(self.dataroot, self.version)
 
-    def __load_table__(self, table_name) -> list:
+    def __load_table__(self, table_name: str) -> list:
         """ Loads a table."""
         with open(osp.join(self.table_root, '{}.json'.format(table_name))) as f:
             table = json.load(f)
@@ -158,12 +154,12 @@ class CustomNuScenes:
             self.lidarseg_idx2name_mapping[lidarseg_category['index']] = lidarseg_category['name']
             self.lidarseg_name2idx_mapping[lidarseg_category['name']] = lidarseg_category['index']
 
-    def __make_reverse_index__(self, verbose: bool, save: bool = False, save_dir: str = 'reverse') -> None:
+    def __make_reverse_index__(self, verbose: bool, save_reverse: bool = False, reserve_dir: str = 'reverse') -> None:
         """
         De-normalizes database to create reverse indices for common cases.
         Args:
             verbose: Whether to print outputs.
-            save (bool): Whether to save tables after initialization.
+            save_reverse (bool): Whether to save tables after initialization.
         """
         start_time = time.time()
         if verbose:
@@ -187,13 +183,6 @@ class CustomNuScenes:
             record['anns'] = []
 
         # Decorate (adds short-cut) sample_data with sensor information.
-        for record in self.sample_data:
-            break
-            cs_record = self.get('calibrated_sensor', record['calibrated_sensor_token'])
-            sensor_record = self.get('sensor', cs_record['sensor_token'])
-            record['sensor_modality'] = sensor_record['modality']
-            record['channel'] = sensor_record['channel']
-
         # each sample data has `data` about camera, lidar, radar
         for sd_record in self.sample_data:
             cs_record = self.get('calibrated_sensor', sd_record['calibrated_sensor_token'])
@@ -202,19 +191,15 @@ class CustomNuScenes:
             sd_record['sensor_modality'] = sensor_record['modality']
             sd_record['channel'] = sensor_record['channel']
             # only key frame will be used to train model (at 2Hz)
-            sample_record = self.get('sample', sd_record['sample_token'])
             if sd_record['is_key_frame']:
+                sample_record = self.get('sample', sd_record['sample_token'])
                 sample_record['data'][sd_record['channel']] = sd_record['token']
 
         # Decorate (adds short-cut) sample_annotation table with for category name.
-        for record in self.sample_annotation:
-            break
-            inst = self.get('instance', record['instance_token'])
-            record['category_name'] = self.get('category', inst['category_token'])['name']
-
         for ann_record in self.sample_annotation:
             inst = self.get('instance', ann_record['instance_token'])
             ann_record['category_name'] = self.get('category', inst['category_token'])['name']
+
             sample_record = self.get('sample', ann_record['sample_token'])
             sample_record['anns'].append(ann_record['token'])
 
@@ -229,16 +214,18 @@ class CustomNuScenes:
             log_record['map_token'] = log_to_map[log_record['token']]
 
         if verbose:
-            print("Done reverse indexing in {:.1f} seconds.\n======".format(time.time() - start_time))
+            logger.info("Done reverse indexing in {:.1f} seconds.".format(time.time() - start_time))
 
-        if save:
-            if save_dir is not None:
-                os.makedirs(save_dir, exist_ok=True)
+        if save_reverse:
+            if reserve_dir is not None:
+                reserve_path = osp.join(self.dataroot, reserve_dir)
+                os.makedirs(reserve_path, exist_ok=True)
                 for table in self.table_names:
                     if table != 'map':
-                        save_file = osp.join(self.dataroot, save_dir, table + ".json")
-                        dump(getattr(self, table), save_file, indent=3)
-                logger.info(f"Save reversed tables in {save_dir!r}")
+                        save_file = osp.join(reserve_path, table + ".json")
+                        dump(getattr(self, table), file=save_file, indent=3)
+
+                logger.info(f"Save reversed tables in {reserve_dir!r}")
 
     def get(self, table_name: str, token: str) -> dict:
         """

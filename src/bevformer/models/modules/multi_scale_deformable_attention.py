@@ -129,7 +129,6 @@ class CustomMSDeformableAttention(BaseModule):
     def forward(
         self,
         query: Tensor,
-        key: Optional[Tensor] = None,
         value: Optional[Tensor] = None,
         identity: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,

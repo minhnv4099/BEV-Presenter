@@ -275,7 +275,6 @@ class _OSA_stage(nn.Sequential):
             )
 
 
-@MODELS.register_module()
 @BACKBONES.register_module()
 class VoVNet(BaseModule):
     def __init__(

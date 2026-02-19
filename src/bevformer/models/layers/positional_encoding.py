@@ -11,7 +11,6 @@ from mmdet.utils import MultiConfig, OptMultiConfig
 from src.registry import MODELS, POSITION_ENCODINGS
 
 
-@MODELS.register_module()
 @POSITION_ENCODINGS.register_module()
 class SinePositionalEncoding(BaseModule):
     """Position encoding with sine and cosine functions.

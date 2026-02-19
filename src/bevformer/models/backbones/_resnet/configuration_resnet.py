@@ -86,7 +86,7 @@ class ResNetConfig(DataclassAsDict):
         downsample_in_first_stage: Optional[bool] = False,
         downsample_in_bottleneck: Optional[bool] = False,
         out_features: Optional[list[int]] = None,
-        out_indices: Optional[list[int]] = [2, 3, 4],
+        out_indices: Optional[list[int]] = (4, ),
         return_dict: bool = True,
         output_hidden_states: bool = True,
         **kwargs,

@@ -152,7 +152,6 @@ def giou_loss(pred: Tensor, target: Tensor, eps: float = 1e-7) -> Tensor:
     return loss
 
 
-@MODELS.register_module()
 @LOSSES.register_module()
 class IoULoss(nn.Module):
     """IoULoss.

@@ -39,7 +39,7 @@ class Compose:
                     f'transform must be a callable object or dict, '
                     f'but got {type(transform)}')
 
-    def __call__(self, data: dict) -> Optional[dict]:
+    def __call__(self, data: dict) -> Union[dict, list[dict], None]:
         """Call function to apply transforms sequentially.
 
         Args:

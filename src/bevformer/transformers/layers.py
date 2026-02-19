@@ -90,13 +90,13 @@ class BaseTransformerLayer(BaseModule):
                     f'to a dict named `ffn_cfgs`. ', DeprecationWarning)
                 ffn_cfgs[new_name] = kwargs[ori_name]
 
-        super().__init__()
+        super().__init__(init_cfg)
 
         self.batch_first = batch_first
 
-        assert set(operation_order) & {
-            'self_attn', 'norm', 'ffn', 'cross_attn'} == \
-            set(operation_order), f'The operation_order of' \
+        assert (set(operation_order) &
+                {'self_attn', 'norm', 'ffn', 'cross_attn'} == set(operation_order)), \
+            f'The operation_order of' \
             f' {self.__class__.__name__} should ' \
             f'contains all four operation type ' \
             f"{['self_attn', 'norm', 'ffn', 'cross_attn']}"
@@ -145,8 +145,7 @@ class BaseTransformerLayer(BaseModule):
             else:
                 assert ffn_cfgs[ffn_index]['embed_dims'] == self.embed_dims
             self.ffns.append(
-                build_feedforward_network(ffn_cfgs[ffn_index],
-                                          dict(type='FFN')))
+                build_feedforward_network(ffn_cfgs[ffn_index], dict(type='FFN')))
 
         self.norms = ModuleList()
         num_norms = operation_order.count('norm')
@@ -154,14 +153,14 @@ class BaseTransformerLayer(BaseModule):
             self.norms.append(build_norm_layer(norm_cfg, self.embed_dims)[1])
 
     def forward(self,
-                query,
-                key=None,
-                value=None,
-                query_pos=None,
-                key_pos=None,
-                attn_masks=None,
-                query_key_padding_mask=None,
-                key_padding_mask=None,
+                query: Tensor,
+                key: Optional[Tensor] = None,
+                value: Optional[Tensor] = None,
+                query_pos: Optional[Tensor] = None,
+                key_pos: Optional[Tensor] = None,
+                attn_masks: Optional[Tensor] = None,
+                query_key_padding_mask: Optional[Tensor] = None,
+                key_padding_mask: Optional[Tensor] = None,
                 **kwargs):
         """Forward function for `TransformerDecoderLayer`.
 

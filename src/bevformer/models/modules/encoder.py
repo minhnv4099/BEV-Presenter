@@ -64,8 +64,10 @@ class BEVFormerEncoder(TransformerLayerSequence):
 
     @staticmethod
     def get_reference_points(
-        H: int, W: int,
-        Z=8, bs=1,
+        H: int,
+        W: int,
+        Z: int = 8,
+        bs: int = 1,
         num_points_in_pillar=4,
         dim: Literal['3d', '2d'] = '3d',
         device='cpu',
@@ -258,7 +260,6 @@ class BEVFormerEncoder(TransformerLayerSequence):
 
         return reference_points_cam, bev_mask
 
-    # TODO: require key and value when actual using
     @auto_fp16()
     def forward(
         self,
@@ -338,17 +339,18 @@ class BEVFormerEncoder(TransformerLayerSequence):
         bev_query = bev_query.permute(1, 0, 2)
         bev_pos = bev_pos.permute(1, 0, 2) if bev_pos is not None else None
 
-        bs, len_bev, num_bev_level, _ = ref_2d.shape
+        bs, num_query, num_bev_level, _ = ref_2d.shape
         if prev_bev is not None:
             # (num_query, bs, embed_dims) -> (bs, num_query, embed_dims)
             prev_bev = prev_bev.permute(1, 0, 2)
             prev_bev = torch.stack(
-                [prev_bev, bev_query], 1).reshape(bs*2, len_bev, -1)
+                [prev_bev, bev_query], 1).reshape(bs*2, num_query, -1)
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
-                bs*2, len_bev, num_bev_level, 2)
+                bs*2, num_query, num_bev_level, 2)
         else:
+            # prev_bev = torch.stack([bev_query, bev_query], 1).reshape(bs * 2, num_query, -1)
             hybird_ref_2d = torch.stack([ref_2d, ref_2d], 1).reshape(
-                bs*2, len_bev, num_bev_level, 2)
+                bs*2, num_query, num_bev_level, 2)
 
         for layer in self.layers:
             output = layer(
@@ -447,8 +449,8 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
         value: Optional[Tensor] = None,
         *args,
         bev_pos: Optional[Tensor] = None,
-        # query_pos: Optional[Tensor] = None,
-        # key_pos: Optional[Tensor] = None,
+        query_pos: Optional[Tensor] = None,
+        key_pos: Optional[Tensor] = None,
         attn_masks: Optional[Tensor] = None,
         query_key_padding_mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
@@ -564,8 +566,8 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
                     key,
                     value,
                     identity if self.pre_norm else None,
-                    # query_pos=query_pos,
-                    # key_pos=key_pos,
+                    query_pos=query_pos,
+                    key_pos=key_pos,
                     reference_points=ref_3d,
                     reference_points_cam=reference_points_cam,
                     bev_mask=bev_mask,

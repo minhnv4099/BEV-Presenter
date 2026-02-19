@@ -2,20 +2,23 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
+from typing import Optional
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 
 
 def multi_scale_deformable_attn_pytorch(
-        value: torch.Tensor,
-        value_spatial_shapes: torch.Tensor,
-        sampling_locations: torch.Tensor,
-        attention_weights: torch.Tensor) -> torch.Tensor:
+    value: torch.Tensor,
+    value_spatial_shapes: torch.Tensor,
+    sampling_locations: torch.Tensor,
+    attention_weights: torch.Tensor
+) -> torch.Tensor:
     """CPU version of multi-scale deformable attention.
 
     Args:
         value (torch.Tensor): The value has shape
-            `(bs, num_keys, num_heads, embed_dims//num_heads)`
+            `(bs, num_values, num_heads, embed_dims//num_heads)`
         value_spatial_shapes (torch.Tensor): Spatial shape of
             each feature map, has shape `(num_levels, 2)`,
             last dimension 2 represent (h, w)
@@ -68,3 +71,67 @@ def multi_scale_deformable_attn_pytorch(
               attention_weights).sum(-1).view(bs, num_heads * embed_dims, num_queries)
 
     return output.transpose(1, 2).contiguous()
+
+
+def eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    head_mask: Optional[torch.Tensor],
+    scaling: float,
+    dropout: float = 0.0,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute attention scores.
+
+    Args:
+        module:
+            Module, used to check whether the module is training to apply dropout properly.
+        query:
+            Query shape `(batch_size, num_heads, q_length, dim)`
+        key:
+            Key shape `(batch_size, num_heads, k_length, dim)`
+        value:
+            Value shape `(batch_size, num_heads, k_length, dimV)`. Most cases `dimV` = `dim`.
+        head_mask:
+            Mask of `1s` and `0s` to ignore some heads after computing attention weights.
+            Shape `(num_layers, num_heads)` or `(num_heads, )`
+        attention_mask:
+            Mask to ignore some token before computing attention weights.
+            Shape `(batch_size, 1, seq_length)` or `(batch_size, 1, q_length, k_length)`
+        scaling:
+            Scaling factor before computing softmax.
+        dropout:
+            Dropout probability after computing softmax.
+
+    Returns:
+        Tuple of attention hidden states `(batch_size, q_length, num_heads, attention_head_size)`
+        and attention weights `(batch_size, num_heads, q_length, k_length)`.
+    """
+    # Take the dot product between "query" and "key" to get the raw attention scores.
+    # (batch_size, num_attention_heads, q_length, k_length)
+    attn_weights = torch.matmul(query, key.transpose(-1, -2)) * scaling
+
+    # Mask token if we want to
+    if attention_mask is not None:
+        attn_weights = attn_weights + attention_mask
+
+    # Normalize the attention scores to probabilities.
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=query.dtype).to(query.dtype)
+
+    # This is actually dropping out entire tokens to attend to, which might
+    # seem a bit unusual, but is taken from the original Transformer paper.
+    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+
+    # Mask heads if we want to
+    if head_mask is not None:
+        attn_weights = attn_weights * head_mask
+
+    # (batch_size, num_attention_heads, q_length, attention_head_size)
+    attn_output = torch.matmul(attn_weights, value)
+    # (batch_size, q_length, num_attention_heads, attention_head_size)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights

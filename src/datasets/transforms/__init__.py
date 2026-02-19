@@ -12,13 +12,13 @@ from .transform_3d import (PhotoMetricDistortionMultiViewImage,
                            RandomScaleImageMultiViewImage,
                            PadMultiViewImage,
                            CustomCollect3D)
-
+from .test_time_aug import MultiScaleFlipAug3D
 
 __all__ = [
     "LoadMultiViewImageFromFiles", "PhotoMetricDistortionMultiViewImage",
     "LoadAnnotations3D", "ObjectRangeFilter", "ObjectNameFilter",
     "NormalizeMultiviewImage", "RandomScaleImageMultiViewImage",
     "PadMultiViewImage", "CustomDefaultFormatBundle3D", "CustomCollect3D",
-    "TypeConverter",
+    "TypeConverter", "MultiScaleFlipAug3D",
     "BaseTransform"
 ]

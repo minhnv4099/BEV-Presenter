@@ -3,20 +3,26 @@
 # ---------------------------------------------
 #  Modified by Minh Nguyen
 # ---------------------------------------------
+from __future__ import annotations
+
 import bisect
 import logging
 import time
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 import torch
 from torch.utils.data import DataLoader
 
 from mmengine.evaluator import Evaluator
 from mmengine.logging import print_log
-from mmengine.registry import LOOPS
 from mmengine.runner.amp import autocast
 from mmengine.runner.base_loop import BaseLoop
 from mmengine.runner.utils import calc_dynamic_intervals
+from src.registry import LOOPS
+from src.runner.base_loop import BaseLoop
+
+if TYPE_CHECKING:
+    from .runner import Runner
 
 
 @LOOPS.register_module()
@@ -39,12 +45,13 @@ class EpochBasedTrainLoop(BaseLoop):
 
     def __init__(
             self,
-            runner,
+            runner: 'Runner',
             dataloader: Union[DataLoader, Dict],
             max_epochs: int,
             val_begin: int = 1,
             val_interval: int = 1,
-            dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
+            dynamic_intervals: Optional[List[Tuple[int, int]]] = None,
+            **kwargs):
         super().__init__(runner, dataloader)
         self._max_epochs = int(max_epochs)
         assert self._max_epochs == max_epochs, \
@@ -58,8 +65,7 @@ class EpochBasedTrainLoop(BaseLoop):
         # when it is enabled.
         self.stop_training = False
         if hasattr(self.dataloader.dataset, 'metainfo'):
-            self.runner.visualizer.dataset_meta = \
-                self.dataloader.dataset.metainfo
+            self.runner.visualizer.dataset_meta = self.dataloader.dataset.metainfo
         else:
             print_log(
                 f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
@@ -69,8 +75,7 @@ class EpochBasedTrainLoop(BaseLoop):
                 level=logging.WARNING)
 
         self.dynamic_milestones, self.dynamic_intervals = \
-            calc_dynamic_intervals(
-                self.val_interval, dynamic_intervals)
+            calc_dynamic_intervals(self.val_interval, dynamic_intervals)
 
     @property
     def max_epochs(self):
@@ -213,13 +218,15 @@ class IterBasedTrainLoop(BaseLoop):
     """
 
     def __init__(
-            self,
-            runner,
-            dataloader: Union[DataLoader, Dict],
-            max_iters: int,
-            val_begin: int = 1,
-            val_interval: int = 1000,
-            dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
+        self,
+        runner: 'Runner',
+        dataloader: Union[DataLoader, Dict],
+        max_iters: int,
+        val_begin: int = 1,
+        val_interval: int = 1000,
+        dynamic_intervals: Optional[List[Tuple[int, int]]] = None,
+        **kwargs
+    ):
         super().__init__(runner, dataloader)
         self._max_iters = int(max_iters)
         assert self._max_iters == max_iters, \
@@ -282,9 +289,9 @@ class IterBasedTrainLoop(BaseLoop):
             self.run_iter(data_batch)
 
             self._decide_current_val_interval()
-            if (self.runner.val_loop is not None
-                    and self._iter >= self.val_begin
-                    and self._iter % self.val_interval == 0):
+            if (self.runner.val_loop is not None and
+                    self._iter >= self.val_begin and
+                    self._iter % self.val_interval == 0):
                 self.runner.val_loop.run()
 
         self.runner.call_hook('after_train_epoch')
@@ -332,7 +339,7 @@ class ValLoop(BaseLoop):
     """
 
     def __init__(self,
-                 runner,
+                 runner: 'Runner',
                  dataloader: Union[DataLoader, Dict],
                  evaluator: Union[Evaluator, Dict, List],
                  fp16: bool = False) -> None:
@@ -407,7 +414,7 @@ class TestLoop(BaseLoop):
     """
 
     def __init__(self,
-                 runner,
+                 runner: 'Runner',
                  dataloader: Union[DataLoader, Dict],
                  evaluator: Union[Evaluator, Dict, List],
                  fp16: bool = False):

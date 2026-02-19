@@ -22,14 +22,13 @@ from src.bevformer.builder import build_positional_encoding
 logger = getLogger(__name__)
 
 
-@MODELS.register_module()
 @HEADS.register_module()
 class BEVFormerHead(DETRHead):
     """Head of Detr3D.
     Args:
         with_box_refine (bool): Whether to refine the reference points
             in the decoder. Defaults to False.
-        as_two_stage (bool) : Whether to generate the proposal from
+        as_two_stage (bool): Whether to generate the proposal from
             the outputs of encoder.
         transformer (obj:`ConfigDict`): ConfigDict is used for building
             the Encoder and Decoder.
@@ -150,10 +149,10 @@ class BEVFormerHead(DETRHead):
                 network, each is a 5D-tensor with shape `(bs, n_cam, c, h, w)`.
             prev_bev (Tensor): Previous bev features.
             only_bev (bool): Only compute BEV features with encoder.
-            img_metas (list[dict]): Image metadata list of `bs` of `n_queue`.
+            img_metas (list[dict]): Image metadata list of `bs`.
         Returns:
-            all_cls_scores (Tensor): Outputs from the classification head, \
-                shape [nb_dec, bs, num_query, cls_out_channels]. Note \
+            all_cls_scores (Tensor): Outputs from the classification head,
+                shape [nb_dec, bs, num_query, cls_out_channels]. Note
                 cls_out_channels should includes background.
             all_bbox_preds (Tensor): Sigmoid outputs from the regression \
                 head with normalized coordinate format (cx, cy, w, l, cz, h, theta, vx, vy). \
@@ -180,19 +179,19 @@ class BEVFormerHead(DETRHead):
                 prev_bev=prev_bev,
                 img_metas=img_metas,
             )
-        else:
-            outputs = self.transformer(
-                mlvl_feats,
-                bev_queries,
-                object_queries,
-                self.bev_h,
-                self.bev_w,
-                grid_length=(self.real_h / self.bev_h, self.real_w / self.bev_w),
-                bev_pos=bev_pos,
-                reg_branches=self.reg_branches if self.with_box_refine else None,  # noqa:E501
-                cls_branches=self.cls_branches if self.as_two_stage else None,
-                img_metas=img_metas,
-                prev_bev=prev_bev
+
+        outputs = self.transformer(
+            mlvl_feats,
+            bev_queries,
+            object_queries,
+            self.bev_h,
+            self.bev_w,
+            grid_length=(self.real_h / self.bev_h, self.real_w / self.bev_w),
+            bev_pos=bev_pos,
+            reg_branches=self.reg_branches if self.with_box_refine else None,  # noqa:E501
+            cls_branches=self.cls_branches if self.as_two_stage else None,
+            img_metas=img_metas,
+            prev_bev=prev_bev
         )
 
         bev_embed, hs, init_reference, inter_references = outputs
@@ -269,7 +268,6 @@ class BEVFormerHead(DETRHead):
                 - pos_inds (Tensor): Sampled positive indices for each image.
                 - neg_inds (Tensor): Sampled negative indices for each image.
         """
-
         num_bboxes = bbox_pred.size(0)
         # assigner and sampler
         gt_c = gt_bboxes.shape[-1]

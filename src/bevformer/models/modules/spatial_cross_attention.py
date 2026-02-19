@@ -126,11 +126,6 @@ class SpatialCrossAttention(BaseModule):
         Returns:
              Tensor: forwarded results with shape [num_query, bs, embed_dims].
         """
-        if key is None:
-            key = query
-        if value is None:
-            value = key
-
         if residual is None:
             residual = query
             slots = torch.zeros_like(query)
@@ -149,17 +144,14 @@ class SpatialCrossAttention(BaseModule):
         max_len = max([len(each) for each in indexes])
 
         # each camera only interacts with its corresponding BEV queries. This step can greatly save GPU memory.
-        queries_rebatch = query.new_zeros(
-            [bs, self.num_cams, max_len, self.embed_dims])
-        reference_points_rebatch = reference_points_cam.new_zeros(
-            [bs, self.num_cams, max_len, D, 2])
+        queries_rebatch = query.new_zeros([bs, self.num_cams, max_len, self.embed_dims])
+        reference_points_rebatch = reference_points_cam.new_zeros([bs, self.num_cams, max_len, D, 2])
 
         for j in range(bs):
             for i, reference_points_per_img in enumerate(reference_points_cam):
                 index_query_per_img = indexes[i]
                 queries_rebatch[j, i, :len(index_query_per_img)] = query[j, index_query_per_img]
-                reference_points_rebatch[j, i, :len(index_query_per_img)] = reference_points_per_img[
-                    j, index_query_per_img]
+                reference_points_rebatch[j, i, :len(index_query_per_img)] = reference_points_per_img[j, index_query_per_img]
 
         num_cams, l, bs, embed_dims = key.shape
 
@@ -177,7 +169,7 @@ class SpatialCrossAttention(BaseModule):
             input_query,
             key=key,
             value=value,
-            reference_points=reference_points_rebatch.view(bs * self.num_cams, max_len,                                                                               D, 2),
+            reference_points=reference_points_rebatch.view(bs * self.num_cams, max_len, D, 2),
             spatial_shapes=spatial_shapes,
             level_start_index=level_start_index
         ).view(bs, self.num_cams, max_len, self.embed_dims)
@@ -264,8 +256,9 @@ class MSDeformableAttention3D(BaseModule):
         self.num_points = num_points
         self.sampling_offsets = nn.Linear(
             embed_dims, num_heads * num_levels * num_points * 2)
-        self.attention_weights = nn.Linear(embed_dims,
-                                           num_heads * num_levels * num_points)
+        self.attention_weights = nn.Linear(
+            in_features=embed_dims,
+            out_features=num_heads * num_levels * num_points)
         self.value_proj = nn.Linear(embed_dims, embed_dims)
 
         self.init_weights()
@@ -293,15 +286,15 @@ class MSDeformableAttention3D(BaseModule):
     # @timing("MSDeformableAttention3D")
     def forward(
         self,
-        query,
-        key=None,
-        value=None,
-        identity=None,
-        query_pos=None,
-        key_padding_mask=None,
-        reference_points=None,
-        spatial_shapes=None,
-        level_start_index=None,
+        query: torch.Tensor,
+        key: Optional[torch.Tensor] = None,
+        value: Optional[torch.Tensor] = None,
+        identity: Optional[torch.Tensor] = None,
+        query_pos: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        reference_points: Optional[torch.Tensor] = None,
+        spatial_shapes: Optional[torch.Tensor] = None,
+        level_start_index: Optional[torch.Tensor] = None,
         **kwargs
     ):
         """Forward Function of MultiScaleDeformAttention.
@@ -351,7 +344,7 @@ class MSDeformableAttention3D(BaseModule):
             value = value.permute(1, 0, 2)
 
         bs, num_query, _ = query.shape
-        bs, num_value, _ = value.shape
+        _, num_value, _ = value.shape
         assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
 
         value = self.value_proj(value)
@@ -384,8 +377,7 @@ class MSDeformableAttention3D(BaseModule):
 
             bs, num_query, num_Z_anchors, xy = reference_points.shape
             reference_points = reference_points[:, :, None, None, None, :, :]
-            sampling_offsets = sampling_offsets / \
-                               offset_normalizer[None, None, None, :, None, :]
+            sampling_offsets = sampling_offsets / offset_normalizer[None, None, None, :, None, :]
             bs, num_query, num_heads, num_levels, num_all_points, xy = sampling_offsets.shape
             sampling_offsets = sampling_offsets.view(
                 bs, num_query, num_heads, num_levels, num_all_points // num_Z_anchors, num_Z_anchors, xy)
@@ -405,7 +397,6 @@ class MSDeformableAttention3D(BaseModule):
 
         #  sampling_locations.shape: bs, num_query, num_heads, num_levels, num_all_points, 2
         #  attention_weights.shape: bs, num_query, num_heads, num_levels, num_all_points
-        #
 
         if torch.cuda.is_available() and value.is_cuda:
             # if value.dtype == torch.float16:
@@ -420,6 +411,7 @@ class MSDeformableAttention3D(BaseModule):
         else:
             output = multi_scale_deformable_attn_pytorch(
                 value, spatial_shapes, sampling_locations, attention_weights)
+
         if not self.batch_first:
             output = output.permute(1, 0, 2)
 

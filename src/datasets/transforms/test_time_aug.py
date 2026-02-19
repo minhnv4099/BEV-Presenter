@@ -4,12 +4,12 @@ from copy import deepcopy
 from typing import Dict, List, Optional, Tuple, Union
 
 import mmengine
-from .pipelines import BaseTransform
-from .compose import Compose
+from src.datasets.compose import Compose
+from src.registry import TRANSFORMS, PIPELINES
+from .base_transform import BaseTransform
 
-from src.registry import TRANSFORMS
 
-
+@PIPELINES.register_module()
 @TRANSFORMS.register_module()
 class MultiScaleFlipAug3D(BaseTransform):
     """Test-time augmentation with multiple scales and flipping.
@@ -40,10 +40,12 @@ class MultiScaleFlipAug3D(BaseTransform):
                  flip: bool = False,
                  flip_direction: str = 'horizontal',
                  pcd_horizontal_flip: bool = False,
-                 pcd_vertical_flip: bool = False):
-        self.transforms = Compose(transforms=transforms)
+                 pcd_vertical_flip: bool = False) -> None:
+        self.transforms = Compose(transforms)
         self.img_scale = img_scale if isinstance(img_scale, list) else [img_scale]
-        self.pts_scale_ratio = pts_scale_ratio if isinstance(pts_scale_ratio, list) else [float(pts_scale_ratio)]
+        self.pts_scale_ratio = pts_scale_ratio \
+            if isinstance(pts_scale_ratio, list) else\
+            [float(pts_scale_ratio)]
 
         assert mmengine.is_list_of(self.img_scale, tuple)
         assert mmengine.is_list_of(self.pts_scale_ratio, float)
@@ -52,14 +54,15 @@ class MultiScaleFlipAug3D(BaseTransform):
         self.pcd_horizontal_flip = pcd_horizontal_flip
         self.pcd_vertical_flip = pcd_vertical_flip
 
-        self.flip_direction = flip_direction if isinstance(flip_direction, list) else [flip_direction]
+        self.flip_direction = flip_direction if isinstance(
+            flip_direction, list) else [flip_direction]
         assert mmengine.is_list_of(self.flip_direction, str)
         if not self.flip and self.flip_direction != ['horizontal']:
-            warnings.warn('flip_direction has no effect when flip is set to False')
-
-        if (self.flip and
-            not any([(t['type'] == 'RandomFlip3D' or
-            t['type'] == 'RandomFlip') for t in transforms])):
+            warnings.warn(
+                'flip_direction has no effect when flip is set to False')
+        if (self.flip and not any([(t['type'] == 'RandomFlip3D'
+                                    or t['type'] == 'RandomFlip')
+                                   for t in transforms])):
             warnings.warn(
                 'flip has no effect when RandomFlip is not in transforms')
 

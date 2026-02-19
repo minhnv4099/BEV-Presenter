@@ -422,7 +422,7 @@ class ResNetForImageClassification(ResNetPreTrainedModel):
 class ResNet(ResNetPreTrainedModel):
     has_attentions = False
 
-    def __init__(self, config: ResNetConfig = None):
+    def __init__(self, config: ResNetConfig = None, **kwargs):
         ResNetPreTrainedModel.__init__(self, init_cfg=None)
 
         config = config or ResNetConfig()

@@ -2,6 +2,9 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
+
+#
+#
 # BEvFormer-tiny consumes at lease 6700M GPU memory
 # compared to bevformer_base, bevformer_tiny has
 # smaller backbone: R101-DCN -> R50
@@ -9,13 +12,6 @@
 # less encoder layers: 6 -> 3
 # smaller input size: 1600*900 -> 800*450
 # multi-scale feautres -> single scale features (C5)
-# _base_ = [
-#     '../datasets/custom_nus-3d.py',
-#     '../_base_/default_runtime.py'
-# ]
-#
-# plugin = True
-# plugin_dir = ...
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53],
@@ -36,21 +32,20 @@ input_modality = dict(
     use_camera=True,
     use_radar=False,
     use_map=False,
-    use_external=True
+    use_external=False
 )
 
 _dim_ = 256
-_pos_dim_ = _dim_//2
-_ffn_dim_ = _dim_*2
-_num_levels_ = 4
+_pos_dim_ = _dim_ // 2
+_ffn_dim_ = _dim_ * 2
+_num_levels_ = 1
 bev_h_ = 50
 bev_w_ = 50
-queue_length = 3
-
+queue_length = 4
 
 encoder = dict(
     type='BEVFormerEncoder',
-    num_layers=2,
+    num_layers=3,
     pc_range=point_cloud_range,
     num_points_in_pillar=8,
     return_intermediate=False,
@@ -82,7 +77,6 @@ encoder = dict(
         operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
                          'ffn', 'norm')))
 
-
 decoder = dict(
     type='DetectionTransformerDecoder',
     num_layers=2,
@@ -91,15 +85,14 @@ decoder = dict(
         type='DetrTransformerDecoderLayer',
         attn_cfgs=[
             dict(
-                type='CustomMSDeformableAttention',
+                type='MultiheadAttention',
                 embed_dims=_dim_,
-                num_levels=1,
-            ),
+                num_heads=8,
+                dropout=0.1),
             dict(
                 type='CustomMSDeformableAttention',
                 embed_dims=_dim_,
-                num_levels=1,
-            )
+                num_levels=1)
         ],
         ffn_cfgs=dict(
             type="FFN",
@@ -149,9 +142,9 @@ pts_bbox_head = dict(
         use_sigmoid=True,
         gamma=2.0,
         alpha=0.25,
-        loss_weight=2.0),
-    loss_bbox=dict(type='L1Loss', loss_weight=0.25),
-    loss_iou=dict(type='GIoULoss', loss_weight=0.0),
+        loss_weight=2.),
+    loss_bbox=dict(type='L1Loss', loss_weight=0.5),
+    loss_iou=dict(type='GIoULoss', loss_weight=0.25),
     train_cfg=None
 )
 
@@ -187,14 +180,17 @@ model = dict(
             assigner=dict(
                 type='HungarianAssigner3D',
                 cls_cost=dict(type='FocalCost', weight=2.0),
-                reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
-                iou_cost=dict(type='SmoothL1Cost', weight=0.0),  # Fake cost. This is just to make it compatible with DETR head.
+                reg_cost=dict(type='BBox3DL1Cost', weight=0.5),
+                iou_cost=dict(type='SmoothL1Cost', weight=0.25),
+                # Fake cost. This is just to make it compatible with DETR head.
                 pc_range=point_cloud_range))))
 
+work_dir = 'experiment'
 dataset_type = 'CustomNuScenesDataset'
 version = "v1.0-mini"
 data_root = f'data/nuscenes/{version}/'
 file_client_args = dict(backend='disk')
+frames = [-3, -2, -1]
 
 train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),  # loading.py
@@ -203,11 +199,11 @@ train_pipeline = [
     dict(type='ObjectNameFilter', classes=class_names),  # transform_3d.py
     dict(type='PhotoMetricDistortionMultiViewImage'),  # transform_3d.py
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),  # transform_3d.py
-    dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),   # transform_3d.py
+    dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),  # transform_3d.py
     dict(type='PadMultiViewImage', size_divisor=32),  # transform_3d.py
     dict(type='CustomDefaultFormatBundle3D', class_names=class_names),  # formating.py
-    dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img']),   # transform_3d.py
-    dict(type='TypeConverter', num_query=900)  # formating.py
+    dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img']),  # transform_3d.py
+    dict(type='TypeConverter')  # formating.py
 ]
 
 test_pipeline = [
@@ -215,16 +211,15 @@ test_pipeline = [
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(
         type='MultiScaleFlipAug3D',
-        img_scale=(1600, 900),
-        pts_scale_ratio=1,
+        img_scale=(800, 450),
+        pts_scale_ratio=[1.0, 2.0],
         flip=False,
         transforms=[
             dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),
             dict(type='PadMultiViewImage', size_divisor=32),
             dict(
-                type='DefaultFormatBundle3D',
-                class_names=class_names,
-                with_label=False),
+                type='CustomDefaultFormatBundle3D',
+                class_names=class_names),
             dict(type='CustomCollect3D', keys=['img'])
         ])
 ]
@@ -237,11 +232,11 @@ data = dict(
         data_root=data_root,
         ann_file=data_root + 'nuscenes_infos_temporal_train.pkl',
         pipeline=train_pipeline,
+        bev_size=(bev_h_, bev_w_),
         classes=class_names,
         modality=input_modality,
         test_mode=False,
         use_valid_flag=True,
-        bev_size=(bev_h_, bev_w_),
         queue_length=queue_length,
         # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
         # and box_type_3d='Depth' in sunrgbd and scannet dataset.
@@ -254,7 +249,9 @@ data = dict(
         bev_size=(bev_h_, bev_w_),
         classes=class_names,
         modality=input_modality,
-        samples_per_gpu=1),
+        frame=(-3, -2, -1),
+        samples_per_gpu=1,
+        frames=frames),
     test=dict(
         type=dataset_type,
         data_root=data_root,
@@ -262,21 +259,87 @@ data = dict(
         pipeline=test_pipeline,
         bev_size=(bev_h_, bev_w_),
         classes=class_names,
-        modality=input_modality),
+        modality=input_modality,
+        frame=frames),
     shuffler_sampler=dict(type='DistributedGroupSampler'),
     nonshuffler_sampler=dict(type='DistributedSampler')
 )
 
+train_dataloader = dict(
+    dataset=data['train'],
+    sampler=dict(
+        type='DefaultSampler', shuffle=True),
+    collate_fn=dict(type='train_collate'),
+    batch_size=1,
+    num_workers=0)
+
+val_dataloader = dict(
+    dataset=data['val'],
+    sampler=dict(
+        type='DefaultSampler', shuffle=False),
+    collate_fn=dict(type='test_collate'),
+    batch_size=1,
+    num_workers=0)
+
+test_dataloader = dict(
+    dataset=data['test'],
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    batch_size=1,
+    num_workers=0)
+
 optimizer = dict(
     type='AdamW',
-    lr=2e-4,
+    lr=1e-4,
+    weight_decay=0.01
     # paramwise_cfg=dict(
     #     custom_keys={
     #         'img_backbone': dict(lr_mult=0.1),
     #     }),
-    weight_decay=0.01)
+)
 
-optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
+auto_scale_lr = dict(base_batch_size=16, enable=False)
+optim_wrapper = dict(type='OptimWrapper', optimizer=optimizer)
+param_scheduler = dict(type='MultiStepLR', milestones=[1, 2])
+
+val_evaluator = dict(metrics=[dict(type="BaseMetric")])
+test_evaluator = dict(metrics=[dict(type="BaseMetric")])
+
+by_epoch = False
+interval = 1
+val_interval = 1
+max_epochs = 10
+max_iters = 1
+
+train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=100)
+val_cfg = None
+test_cfg = None
+
+default_hooks = dict(
+    runtime_info=dict(type='RuntimeInfoHook'),
+    timer=dict(type='IterTimerHook'),
+    sampler_seed=dict(type='DistSamplerSeedHook'),
+    param_scheduler=dict(type='ParamSchedulerHook'),
+    logger=dict(type='LoggerHook', interval=1, log_metric_by_epoch=by_epoch, interval_exp_name=1000),
+    checkpoint=dict(type='CheckpointHook', interval=1, by_epoch=by_epoch))
+custom_hooks = [
+    dict(
+        type='CheckpointUploader',
+        repo_id='5421Project/bevformer',
+        interval=1,
+        by_epoch=by_epoch)
+]
+
+launcher = 'none'
+env_cfg = dict(dist_cfg=dict(backend='nccl'))
+log_processor = dict(window_size=20)
+visualizer = dict(
+    type='Visualizer',
+    vis_backends=[
+        dict(type='LocalVisBackend'),
+        dict(type='TensorboardVisBackend')
+    ]
+)
+
 # learning policy
 lr_config = dict(
     policy='CosineAnnealing',
@@ -284,16 +347,3 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
-total_epochs = 24
-evaluation = dict(interval=1, pipeline=test_pipeline)
-
-runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
-
-log_config = dict(
-    interval=50,
-    hooks=[
-        dict(type='TextLoggerHook'),
-        dict(type='TensorboardLoggerHook')
-    ])
-
-checkpoint_config = dict(interval=1)

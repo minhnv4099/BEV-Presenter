@@ -16,8 +16,6 @@ from torchvision.transforms.functional import rotate
 from src.typing import ConfigType
 from src.registry import TRANSFORMERS
 from src.bevformer.models.utils.bricks import build_transformer_block
-# from projects.mmdet3d_plugin.models.utils.visual import save_tensor
-from src.bevformer.models.utils.bricks import run_time
 from .temporal_self_attention import TemporalSelfAttention
 from .spatial_cross_attention import MSDeformableAttention3D
 from .multi_scale_deformable_attention import CustomMSDeformableAttention
@@ -55,10 +53,8 @@ class PerceptionTransformer(BaseModule):
         super(PerceptionTransformer, self).__init__(**kwargs)
         self.encoder = None
         self.decoder = None
-        if encoder is not None:
-            self.encoder = build_transformer_block(encoder)
-        if decoder is not None:
-            self.decoder = build_transformer_block(decoder)
+        self.encoder = build_transformer_block(encoder)
+        self.decoder = build_transformer_block(decoder)
 
         self.embed_dims = embed_dims
         self.num_feature_levels = num_feature_levels
@@ -165,7 +161,7 @@ class PerceptionTransformer(BaseModule):
                     be returned when `as_two_stage` is True, \
                     otherwise None.
         """
-        # bev_embed shape: (bs, bev_h*bev_w, embed_dims)
+        # bev_embed shape: (bev_h*bev_w, bs, embed_dims)
         bev_embed = self.get_bev_features(
             mlvl_feats,
             bev_queries,
@@ -176,7 +172,7 @@ class PerceptionTransformer(BaseModule):
             prev_bev=prev_bev,
             **kwargs)
 
-        # shape of (bev_h * bev_w, bs, embed_dims)
+        # shape of (bs, bev_h * bev_w, embed_dims)
         bev_embed = bev_embed.permute(1, 0, 2)
 
         bs = mlvl_feats[0].size(0)
@@ -237,14 +233,6 @@ class PerceptionTransformer(BaseModule):
                 Shape of `(bs, embed_dims, bev_h, bev_w)`.
             prev_bev (Tensor): Previous bev feats.
             **kwargs: Dictionary with some keys
-
-                img_metas: [
-                    {'can_bus': [x, y, angle, rotation_angle]},
-                    {'can_bus': [x, y]},
-                    {'can_bus': [x, y]}
-                    ...
-                    bs
-                ]
         """
         bs = mlvl_feats[0].size(0)
         # (num_query, bs, embed_dims)

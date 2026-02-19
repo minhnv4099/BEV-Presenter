@@ -2,13 +2,13 @@
 from os import path as osp
 import copy
 from typing import Optional, Union, Sequence, List, Callable
+from collections import OrderedDict, defaultdict
 
 import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from nuscenes.eval.common.utils import quaternion_yaw, Quaternion
-
 from src.structures.data_container import DataContainer as DC
 from src.registry import DATASETS
 from src.structures.bbox_3d import LiDARInstance3DBoxes, CameraInstance3DBoxes
@@ -20,6 +20,8 @@ from .det3d_dataset import Det3DDataset
 from .compose import Compose
 
 logger = getLogger(__name__)
+TrainSampleType = dict[str, Union[torch.Tensor, list[dict]]]
+TestSampleType = dict[str, list[Union[torch.Tensor, list[dict]]]]
 
 
 @DATASETS.register_module()
@@ -58,7 +60,7 @@ class CustomNuScenesDataset(Dataset):
         test_mode (bool, optional): Whether the dataset is in test mode.
             Defaults to False.
         eval_version (bool, optional): Configuration version of evaluation.
-            Defaults to  'detection_cvpr_2019'.
+            Defaults to 'detection_cvpr_2019'.
         use_valid_flag (bool): Whether to use `use_valid_flag` key in the info
             file as mask to filter gt_boxes and gt_names. Defaults to False.
     """
@@ -123,21 +125,23 @@ class CustomNuScenesDataset(Dataset):
                'barrier')
 
     def __init__(
-            self,
-            queue_length: int = 4,
-            bev_size: tuple[int] = (200, 200),
-            overlap_test: bool = False,
-            ann_file: Optional[str] = None,
-            data_root: Optional[str] = None,
-            debug_pipeline: bool = False,
-            modality: dict = dict(use_lidar=False, use_camera=True),
-            pipeline: List[Union[dict, Callable]] = (),
-            test_mode: bool = False,
-            with_velocity: bool = True,
-            load_type: str = 'fov_image_based',
-            box_type_3d: str = "CAMERA",
-            classes: list[str] = None,
-            *args, **kwargs
+        self,
+        queue_length: int = 4,
+        bev_size: tuple[int, int] = (200, 200),
+        overlap_test: bool = False,
+        ann_file: Optional[str] = None,
+        data_root: Optional[str] = None,
+        debug_pipeline: bool = False,
+        modality: dict = dict(use_lidar=False, use_camera=True),
+        pipeline: List[Union[dict, Callable]] = (),
+        test_mode: bool = True,
+        with_velocity: bool = True,
+        load_type: str = 'fov_image_based',
+        box_type_3d: str = "CAMERA",
+        classes: list[str] = None,
+        frames: Sequence[int] = (0, -1, -2, -3),
+        filter_empty_gt: bool = True,
+        *args, **kwargs
     ):
         super().__init__()
         self.data_root = data_root
@@ -151,6 +155,8 @@ class CustomNuScenesDataset(Dataset):
         self.bev_size = bev_size
         self.test_mode = test_mode
         self.class_names = classes
+        self.frames = frames
+        self.filter_empty_gt = filter_empty_gt
 
         self.name2idx = {
             name: idx
@@ -177,7 +183,7 @@ class CustomNuScenesDataset(Dataset):
         Returns:
             dict: Data dictionary of the corresponding index.
         """
-        if self.test_mode and False:
+        if self.test_mode:
             return self.prepare_test_data(idx)
 
         while True:
@@ -188,7 +194,47 @@ class CustomNuScenesDataset(Dataset):
 
             return data
 
-    def prepare_train_data(self, index: int):
+    def prepare_test_data(self, index) -> TestSampleType:
+        """Prepare data for testing.
+
+        Args:
+            index (int): Index for accessing the target data.
+
+        Returns:
+            dict: Testing data dict of the corresponding index.
+        """
+        # another way to gather data queue
+        data_queue: OrderedDict[int, list[dict]] = OrderedDict()
+        input_dict = self.get_data_info(index)
+        cur_scene_token = input_dict['scene_token']
+        example = self.pipeline(input_dict)
+        data_queue[0] = example
+
+        for frame_idx in self.frames:
+            chosen_idx = index + frame_idx
+            if frame_idx == 0 or chosen_idx < 0 or chosen_idx >= len(self.data_infos):
+                continue
+            input_dict = self.get_data_info(chosen_idx)
+            if input_dict['scene_token'] == cur_scene_token:
+                example = self.pipeline(input_dict)
+                data_queue[frame_idx] = example
+
+        data_queue = OrderedDict(sorted(data_queue.items()))
+        ret = defaultdict(list)
+        n_aug = len(data_queue[0])
+
+        for i in range(n_aug):
+            single_aug_data_queue = []
+            for t in data_queue.keys():
+                single_aug_data_queue.append(data_queue[t][i])
+
+            single_aug_sample = self.union2one(single_aug_data_queue)
+            for key, value in single_aug_sample.items():
+                ret[key].append(value)
+
+        return dict(ret)
+
+    def prepare_train_data(self, index: int) -> dict[str, Union[torch.Tensor, list]]:
         """
         Training data preparation.
         Args:
@@ -211,8 +257,8 @@ class CustomNuScenesDataset(Dataset):
             # self.pre_pipeline(input_dict)
             example = self.pipeline(input_dict)
 
-            # if self.filter_empty_gt and (example is None or ~(example['gt_labels_3d']._data != -1).any()):
-            #     return None
+            if self.filter_empty_gt and (example is None or len(example['gt_labels_3d']) == 0):
+                return None
             queue.append(example)
 
         return self.union2one(queue)
@@ -281,10 +327,6 @@ class CustomNuScenesDataset(Dataset):
                     lidar2cam=lidar2cam_rts,
                 ))
 
-        if not self.test_mode:
-            annos = self.parse_ann_info(data_info)
-            input_dict['ann_info'] = annos
-
         rotation = Quaternion(input_dict['ego2global_rotation'])
         translation = input_dict['ego2global_translation']
         can_bus = input_dict['can_bus']
@@ -296,6 +338,9 @@ class CustomNuScenesDataset(Dataset):
             patch_angle += 360
         can_bus[-2] = patch_angle / 180 * np.pi
         can_bus[-1] = patch_angle
+
+        if not self.test_mode:
+            input_dict['ann_info'] = self.parse_ann_info(data_info)
 
         return input_dict
 
@@ -316,27 +361,32 @@ class CustomNuScenesDataset(Dataset):
         # if ann_info is not None:
         #     ann_info = self._filter_with_mask(ann_info)
         ann_info = dict()
+        n_instance = len(info['gt_boxes'])
 
-        gt_bboxes_3d = info['gt_boxes']
-        gt_velocities = info['gt_velocity']
-        # TODO: convert string -> index
-        gt_labels_3d = [self.name2idx.get(name, 1) for name in info['gt_names']]
-        ann_info['gt_labels_3d'] = np.array(gt_labels_3d)
+        if n_instance != 0:
+            gt_bboxes_3d = info['gt_boxes']
+            gt_velocities = info['gt_velocity']
+            if self.with_velocity:
+                nan_mask = np.isnan(gt_velocities[:, 0])
+                gt_velocities[nan_mask] = [0.0, 0.0]
+                gt_bboxes_3d = np.concatenate([gt_bboxes_3d, gt_velocities], axis=-1)
 
-        if self.with_velocity:
-            nan_mask = np.isnan(gt_velocities[:, 0])
-            gt_velocities[nan_mask] = [0.0, 0.0]
-            gt_bboxes_3d = np.concatenate([gt_bboxes_3d, gt_velocities], axis=-1)
-            ann_info['gt_bboxes_3d'] = gt_bboxes_3d
-        else:
-            ann_info['gt_bboxes_3d'] = gt_bboxes_3d
+            # TODO: convert string -> index
+            gt_labels_3d = [self.name2idx.get(name, -1) for name in info['gt_names']]
+            gt_labels_3d = np.array(gt_labels_3d, dtype=np.int64)
 
+            # filter out no need labels and bbox
+            mask_labels = gt_labels_3d != -1
+
+            ann_info['gt_bboxes_3d'] = gt_bboxes_3d[mask_labels]
+            ann_info['gt_labels_3d'] = gt_labels_3d[mask_labels]
         # empty instance
-        # if self.with_velocity:
-        #     ann_info['gt_bboxes_3d'] = np.zeros((0, 9), dtype=np.float32)
-        # else:
-        #     ann_info['gt_bboxes_3d'] = np.zeros((0, 7), dtype=np.float32)
-        # ann_info['gt_labels_3d'] = np.zeros(0, dtype=np.int64)
+        else:
+            if self.with_velocity:
+                ann_info['gt_bboxes_3d'] = np.zeros((0, 9), dtype=np.float32)
+            else:
+                ann_info['gt_bboxes_3d'] = np.zeros((0, 7), dtype=np.float32)
+            ann_info['gt_labels_3d'] = np.zeros(0, dtype=np.int64)
 
         if self.load_type in ['fov_image_based', 'mv_image_based']:
             ann_info['gt_bboxes'] = np.zeros((0, 4), dtype=np.float32)
@@ -372,6 +422,7 @@ class CustomNuScenesDataset(Dataset):
         Returns:
             dict: Annotations after filtering.
         """
+        return ann_info
         filtered_annotations = {}
         if self.use_valid_flag:
             filter_mask = ann_info['bbox_3d_isvalid']
@@ -418,7 +469,7 @@ class CustomNuScenesDataset(Dataset):
                 prev_pos = copy.deepcopy(tmp_pos)
                 prev_angle = copy.deepcopy(tmp_angle)
 
-        imgs_list = [torch.from_numpy(each['img']) for each in queue]
+        imgs_list = [torch.from_numpy(np.array(each['img'])) for each in queue]
         # still keep remaining keys 'gt_bboxes_3d', 'gt_labels_3d'
         # combine img and img_meta
         queue[-1]['img'] = torch.stack(imgs_list, dim=0).permute(0, 1, 4, 2, 3)
@@ -445,8 +496,7 @@ class CustomNuScenesDataset(Dataset):
             dict: Dictionary of evaluation details.
         """
         from nuscenes import NuScenes
-        self.nusc = NuScenes(version=self.version, dataroot=self.data_root,
-                             verbose=True)
+        self.nusc = NuScenes(version=self.version, dataroot=self.data_root, verbose=True)
 
         output_dir = osp.join(*osp.split(result_path)[:-1])
 

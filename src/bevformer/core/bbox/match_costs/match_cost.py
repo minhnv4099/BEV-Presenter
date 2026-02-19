@@ -4,15 +4,53 @@
 #  Modified by Minh Nguyen
 # ---------------------------------------------
 import torch
+import torch.nn as nn
 from src.registry import MATCH_COST
-from src.bevformer.models.losses import FocalLoss
 from src.bevformer.models.utils.weighted import weighted_loss
 
 
 @MATCH_COST.register_module()
-class FocalCost(FocalLoss):
-    def __init__(self, weight: float = 1., **kwargs):
-        super().__init__(loss_weight=weight, **kwargs)
+class FocalCost(nn.Module):
+    """
+    Focal classification cost for Hungarian matching.
+
+    Args:
+        weight (float): cost weight.
+        alpha (float): focal alpha.
+        gamma (float): focal gamma.
+        eps (float): numerical stability.
+    """
+
+    def __init__(self,
+                 weight: float = 1.0,
+                 alpha: float = 0.25,
+                 gamma: float = 2.0,
+                 eps: float = 1e-8):
+        super().__init__()
+        self.weight = weight
+        self.alpha = alpha
+        self.gamma = gamma
+        self.eps = eps
+
+    def forward(self,
+                pred_logits: torch.Tensor,
+                gt_labels: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred_logits: (num_queries, num_classes)
+            gt_labels:   (num_gts,)  class index
+
+        Returns:
+            cost: (num_queries, num_gts)
+        """
+        # sigmoid probability
+        pred_prob = pred_logits.sigmoid()  # (Q, C)
+        pt = pred_prob[:, gt_labels.detach()]
+
+        # focal positive cost
+        pos_cost = - self.alpha * ((1 - pt) ** self.gamma) * torch.log(pt + self.eps)
+
+        return pos_cost * self.weight
 
 
 @MATCH_COST.register_module()
@@ -93,10 +131,8 @@ class SmoothL1Cost(object):
         Returns:
             torch.Tensor: iou_cost value with weight
         """
-        N1, C = bboxes.shape
-        N2, C = gt_bboxes.shape
-        input = bboxes.contiguous().view(N1, C)[:, None, :]
-        target = gt_bboxes.contiguous().view(N2, C)[None, :, :]
-        cost = smooth_l1_loss(bboxes, target)
+        pred = bboxes.contiguous().view(bboxes.shape)[:, None, :]
+        target = gt_bboxes.contiguous().view(gt_bboxes.shape)[None, :, :]
+        cost = smooth_l1_loss(pred, target)
 
         return cost * self.weight

@@ -4,6 +4,8 @@
 #
 from mmengine.fileio import dump as mmdump
 from mmengine.fileio import load as mmload
+from typing import Any
+from os import path as osp
 
 
 def dump(obj,
@@ -16,7 +18,8 @@ def dump(obj,
 
     if file is None:
         file_format = file_format or 'json'
-        indent = indent or 3
+
+    indent = indent or 3
 
     return mmdump(
         obj,
@@ -35,3 +38,11 @@ def load(file,
          backend_args=None,
          **kwargs):
     return mmload(file, file_format, file_client_args, backend_args, **kwargs)
+
+
+def dump_check_exist(data: Any, file_path: str, replace_exist: bool = False):
+    if not osp.exists(file_path):
+        dump(data, file_path)
+        return True
+
+    return False

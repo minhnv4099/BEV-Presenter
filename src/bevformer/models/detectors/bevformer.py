@@ -8,9 +8,8 @@ from __future__ import annotations
 import copy
 from typing import Optional, TYPE_CHECKING, Literal, Union, Dict
 import torch
-from mmengine.model import BaseModel
 
-from src.registry import MODELS, DETECTORS
+from src.registry import DETECTORS
 from src.bevformer.models.utils.grid_mask import GridMask
 from src.bevformer.models.utils.bbox import bbox3d2result
 from src.utils.logging import getLogger
@@ -22,11 +21,9 @@ if TYPE_CHECKING:
     from src.modeling_output import BackboneOutput
     from src.structures.bbox_3d import BaseInstance3DBoxes
 
-
 logger = getLogger(__name__)
 
 
-@MODELS.register_module()
 @DETECTORS.register_module()
 class BEVFormerDetector(MVXTwoStageDetector):
     """BEVFormer Detector, an end-to-end detector.
@@ -37,11 +34,10 @@ class BEVFormerDetector(MVXTwoStageDetector):
 
     def __init__(
         self,
-        # arguments for self
-        use_grid_mask=False,
-        pretrained=None,
-        video_test_mode=False,
-        pts_voxel_layer=None,
+        use_grid_mask: bool = False,
+        pretrained: Optional[str] = None,
+        video_test_mode: bool = False,
+        pts_voxel_layer: Optional[Dict] = None,
         pts_voxel_encoder: Optional[dict] = None,
         pts_middle_encoder: Optional[dict] = None,
         pts_fusion_layer: Optional[dict] = None,
@@ -58,8 +54,6 @@ class BEVFormerDetector(MVXTwoStageDetector):
         data_preprocessor: Optional[dict] = None,
         **kwargs
     ):
-        BaseModel.__init__(self, data_preprocessor, init_cfg)
-        logger.info(self.data_preprocessor)
         MVXTwoStageDetector.__init__(
             self,
             pts_voxel_encoder=pts_voxel_encoder,
@@ -74,8 +68,8 @@ class BEVFormerDetector(MVXTwoStageDetector):
             img_rpn_head=img_rpn_head,
             train_cfg=train_cfg,
             test_cfg=test_cfg,
-            data_preprocessor=data_preprocessor,
             init_cfg=init_cfg,
+            data_preprocessor=data_preprocessor,
             **kwargs
         )
         self.grid_mask = GridMask(
@@ -128,11 +122,8 @@ class BEVFormerDetector(MVXTwoStageDetector):
         gt_labels_3d: Optional[list[torch.Tensor]] = None,
         gt_labels: Optional[list[torch.Tensor]] = None,
         gt_bboxes: Optional[list[torch.Tensor]] = None,
-        proposals: Optional[list[torch.Tensor]] = None,
         gt_bboxes_ignore: Optional[list[torch.Tensor]] = None,
-        img_depth=None,
-        img_mask=None,
-        batch_size: int = 1,
+        proposals: Optional[list[torch.Tensor]] = None
     ):
         """Forward training function.
 
@@ -159,13 +150,6 @@ class BEVFormerDetector(MVXTwoStageDetector):
         Returns:
             dict: Losses of different branches.
         """
-        if len(img.shape) == 5:
-            img = torch.stack([img] * batch_size, dim=0)
-
-        img_metas = construct_list(img_metas, batch_size)
-        gt_bboxes_3d = construct_list(gt_bboxes_3d, batch_size)
-        gt_labels_3d = construct_list(gt_labels_3d, batch_size)
-
         len_queue = img.size(1)
         # shape (bs, n_queue-1, n_cam, C, H, W)
         prev_img = img[:, :-1, ...]
@@ -225,7 +209,9 @@ class BEVFormerDetector(MVXTwoStageDetector):
                 img_feats = [each_scale[:, i] for each_scale in img_feats_list]
 
                 prev_bev = self.pts_bbox_head(
-                    img_feats, img_metas, prev_bev,
+                    mlvl_feats=img_feats,
+                    prev_bev=prev_bev,
+                    img_metas=img_metas,
                     only_bev=True)
 
             self.train()
@@ -281,8 +267,6 @@ class BEVFormerDetector(MVXTwoStageDetector):
         if self.use_grid_mask:
             pixel_values = self.grid_mask(pixel_values)
 
-        # backbone_output: "BackboneOutput" = self.img_backbone(pixel_values)
-        # feature_maps = backbone_output.feature_maps
         feature_maps = self.img_backbone(pixel_values)
 
         if self.with_img_neck:
@@ -338,11 +322,16 @@ class BEVFormerDetector(MVXTwoStageDetector):
         dummy_metas = None
         return self.forward_test(img=img, img_metas=[[dummy_metas]])
 
-    def forward_test(self, img_metas, img=None, **kwargs):
+    def forward_test(
+        self,
+        img: list[torch.Tensor],
+        img_metas: list[list[dict]],
+        **kwargs
+    ):
         if not isinstance(img_metas, list):
             raise TypeError(f"'img_metas' must be a list, but got {type(img_metas)}")
-
-        img = [img] if img is None else img
+        if not isinstance(img, list):
+            raise TypeError(f"'img' must be a list, but got {type(img)}")
 
         if img_metas[0][0]['scene_token'] != self.prev_frame_info['scene_token']:
             # the first sample of each scene is truncated

@@ -78,12 +78,12 @@ class HungarianAssigner3D(BaseAssigner):
         Args:
             bbox_pred (Tensor): Predicted boxes with normalized coordinates
                 (cx, cy, w, h), which are all in range [0, 1]. Shape
-                [num_query, 4].
+                `[num_query, 4]`.
             cls_pred (Tensor): Predicted classification logits, shape
-                [num_query, num_class].
+                `[num_query, num_class]`.
             gt_bboxes (Tensor): Ground truth boxes with unnormalized
-                coordinates (x1, y1, x2, y2). Shape [num_gt, 4].
-            gt_labels (Tensor): Label of `gt_bboxes`, shape (num_gt,).
+                coordinates (x1, y1, x2, y2). Shape `[num_gt, 4]`.
+            gt_labels (Tensor): Label of `gt_bboxes`, shape `(num_gt,)`.
             gt_bboxes_ignore (Tensor, optional): Ground truth bboxes that are
                 labelled as `ignored`. Default None.
             eps (int | float, optional): A value added to the denominator for
@@ -110,16 +110,13 @@ class HungarianAssigner3D(BaseAssigner):
         # 2. compute the weighted costs
         # classification and bboxcost.
         cls_cost = self.cls_cost(cls_pred, gt_labels)
+
         # regression L1 cost
-       
         normalized_gt_bboxes = normalize_bbox(gt_bboxes)
-    
         reg_cost = self.reg_cost(bbox_pred[:, :8], normalized_gt_bboxes[:, :8])
       
         # weighted sum of above two costs
         cost = cls_cost + reg_cost
-        # NOTE: fake data to avoid nan
-        cost[...] = 0.1
         
         # 3. do Hungarian matching on CPU using linear_sum_assignment
         cost = cost.detach().cpu()
@@ -127,10 +124,8 @@ class HungarianAssigner3D(BaseAssigner):
             raise ImportError('Please run "pip install scipy" '
                               'to install scipy first.')
         matched_row_inds, matched_col_inds = linear_sum_assignment(cost)
-        matched_row_inds = torch.from_numpy(matched_row_inds).to(
-            bbox_pred.device)
-        matched_col_inds = torch.from_numpy(matched_col_inds).to(
-            bbox_pred.device)
+        matched_row_inds = torch.from_numpy(matched_row_inds).to(bbox_pred.device)
+        matched_col_inds = torch.from_numpy(matched_col_inds).to(bbox_pred.device)
 
         # 4. assign backgrounds and foregrounds
         # assign all indices to backgrounds first

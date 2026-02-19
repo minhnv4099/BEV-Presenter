@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from mmdet3d.structures import Det3DDataSample
 
 
-@MODELS.register_module()
 @DETECTORS.register_module()
 class MVXTwoStageDetector(BaseModel):
     """Base class of Multi-modality VoxelNet.

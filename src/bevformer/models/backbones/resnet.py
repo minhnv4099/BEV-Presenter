@@ -196,6 +196,7 @@ class SimplifiedBasicBlock(BaseModule):
 
         return out
 
+
 class BasicBlock(BaseModule):
     expansion = 1
 
@@ -487,8 +488,7 @@ class Bottleneck(BaseModule):
         return out
 
 
-@MODELS.register_module()
-@BACKBONES.register_module()
+@BACKBONES.register_module(force=True)
 class ResNet(BaseModule):
     """ResNet backbone.
 

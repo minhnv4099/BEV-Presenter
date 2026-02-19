@@ -35,15 +35,11 @@ from mmengine.model import (MMDistributedDataParallel, convert_sync_batchnorm,
 from mmengine.model.efficient_conv_bn_eval import turn_on_efficient_conv_bn_eval
 from mmengine.optim import (OptimWrapper, OptimWrapperDict, _ParamScheduler,
                             build_optim_wrapper)
-from mmengine.registry import (DATA_SAMPLERS, DATASETS, EVALUATOR, FUNCTIONS,
-                               HOOKS, LOG_PROCESSORS, LOOPS, MODEL_WRAPPERS,
-                               MODELS, OPTIM_WRAPPERS, PARAM_SCHEDULERS,
-                               RUNNERS, VISUALIZERS, DefaultScope)
+from mmengine.registry import DefaultScope
 from mmengine.utils import apply_to, digit_version, get_git_hash, is_seq_of
 from mmengine.utils.dl_utils import (TORCH_VERSION, collect_env,
                                      set_multi_processing)
 from mmengine.visualization import Visualizer
-from mmengine.runner.base_loop import BaseLoop
 from mmengine.runner.checkpoint import (
     _load_checkpoint,
     _load_checkpoint_to_model,
@@ -52,11 +48,20 @@ from mmengine.runner.checkpoint import (
     weights_to_cpu
 )
 from mmengine.runner.log_processor import LogProcessor
-from mmengine.runner.loops import EpochBasedTrainLoop, IterBasedTrainLoop, TestLoop, ValLoop
 from mmengine.runner.utils import set_random_seed
+
+from mmengine.registry import (VISUALIZERS,
+                               PARAM_SCHEDULERS, EVALUATOR,
+                               LOG_PROCESSORS, LOOPS,
+                               MODEL_WRAPPERS, DATA_SAMPLERS)
+from src.registry import (DATASETS, MODELS, RUNNERS, FUNCTIONS,
+                          HOOKS, OPTIM_WRAPPERS, VISUALIZERS,
+                          MODEL_WRAPPERS)
 from src.utils.logging import getLogger
 from src.device import get_device
 from .priority import Priority, get_priority
+from .base_loop import BaseLoop
+from .loops import EpochBasedTrainLoop, IterBasedTrainLoop, TestLoop, ValLoop
 
 ConfigType = Union[Dict, Config, ConfigDict]
 ParamSchedulerType = Union[List[_ParamScheduler], Dict[str, List[_ParamScheduler]]]
@@ -65,7 +70,7 @@ OptimWrapperType = Union[OptimWrapper, OptimWrapperDict]
 logger = getLogger(__name__)
 
 
-# @RUNNERS.register_module()
+@RUNNERS.register_module()
 class Runner:
     """A training helper for PyTorch.
 
@@ -176,7 +181,7 @@ class Runner:
             dict build Visualizer object. Defaults to None. If not
             specified, default config will be used.
         default_scope (str): Used to reset registries location.
-            Defaults to "mmengine".
+            Defaults to None".
         randomness (dict): Some settings to make the experiment as reproducible
             as possible like seed and deterministic.
             Defaults to ``dict(seed=None)``. If seed is None, a random number
@@ -276,9 +281,10 @@ class Runner:
         log_processor: Optional[Dict] = None,
         log_level: str = 'INFO',
         visualizer: Optional[Union[Visualizer, Dict]] = None,
-        default_scope: str = 'mmengine',
+        default_scope: Optional[str] = None,
         randomness: Dict = dict(seed=132),
         experiment_name: Optional[str] = None,
+        use_new_lr: bool = False,
         cfg: Optional[ConfigType] = None,
     ):
         self._work_dir = osp.abspath(work_dir)
@@ -296,20 +302,26 @@ class Runner:
 
         # lazy initialization
         training_related = [train_dataloader, train_cfg, optim_wrapper]
-        if not (all(item is None for item in training_related) or
-                all(item is not None for item in training_related)):
-            raise ValueError(
-                'train_dataloader, train_cfg, and optim_wrapper should be '
-                'either all None or not None, but got '
-                f'train_dataloader={train_dataloader}, '
-                f'train_cfg={train_cfg}, '
-                f'optim_wrapper={optim_wrapper}.')
+        self.enough_to_train = all(item is not None for item in training_related)
+
+        if not self.enough_to_train:
+            # self.logger.warning(
+            #     'train_dataloader, train_cfg, and optim_wrapper should be '
+            #     'either all None or not None, but got '
+            #     f'train_dataloader={train_dataloader}, '
+            #     f'train_cfg={train_cfg}, '
+            #     f'optim_wrapper={optim_wrapper}.')
+            logger.warning(
+                f"It's not enough to train because got \n"
+                f"\ttrain_dataloader={train_dataloader} \n"
+                f'\ttrain_cfg={train_cfg} \n'
+                f'\toptim_wrapper={optim_wrapper}.')
         self._train_dataloader = train_dataloader
         self._train_loop = train_cfg
         self.optim_wrapper: Optional[Union[OptimWrapper, dict]]
         self.optim_wrapper = optim_wrapper
-
         self.auto_scale_lr = auto_scale_lr
+        self.use_new_lr = use_new_lr
 
         # If there is no need to adjust learning rate, momentum or other
         # parameters of optimizer, param_scheduler can be None
@@ -327,25 +339,33 @@ class Runner:
         self.param_schedulers = param_scheduler
 
         val_related = [val_dataloader, val_cfg, val_evaluator]
-        if not (all(item is None for item in val_related) or
-                all(item is not None for item in val_related)):
-            raise ValueError(
-                'val_dataloader, val_cfg, and val_evaluator should be either '
-                'all None or not None, but got '
-                f'val_dataloader={val_dataloader}, val_cfg={val_cfg}, '
-                f'val_evaluator={val_evaluator}')
+        self.enough_to_val = all(item is not None for item in val_related)
+        if not self.enough_to_val:
+            logger.warning(
+                f"It's not enough to val because got \n"
+                f"\tval_dataloader={val_dataloader} \n"
+                f'\tval_cfg={val_cfg}\n'
+                f'\tval_evaluator={val_evaluator}.'
+            )
         self._val_dataloader = val_dataloader
         self._val_loop = val_cfg
         self._val_evaluator = val_evaluator
 
         test_related = [test_dataloader, test_cfg, test_evaluator]
-        if not (all(item is None for item in test_related) or
-                all(item is not None for item in test_related)):
-            raise ValueError(
-                'test_dataloader, test_cfg, and test_evaluator should be '
-                'either all None or not None, but got '
-                f'test_dataloader={test_dataloader}, test_cfg={test_cfg}, '
-                f'test_evaluator={test_evaluator}')
+        self.enough_to_test = all(item is not None for item in test_related)
+        if not self.enough_to_test:
+            logger.warning(
+                f"It's not enough to test because got \n"
+                f"\ttest_evaluator={test_evaluator}\n"
+                f'\ttest_cfg={test_cfg}\n'
+                f'\ttest_dataloader={test_dataloader}.'
+            )
+            # raise ValueError(
+            #     'test_dataloader, test_cfg, and test_evaluator should be '
+            #     'either all None or not None, but got '
+            #     f'test_dataloader={test_dataloader}, '
+            #     f'test_cfg={test_cfg}, '
+            #     f'test_evaluator={test_evaluator}')
         self._test_dataloader = test_dataloader
         self._test_loop = test_cfg
         self._test_evaluator = test_evaluator
@@ -372,22 +392,23 @@ class Runner:
             self._experiment_name = f'{filename_no_ext}_{self._timestamp}'
         else:
             self._experiment_name = self.timestamp
-        self._log_dir = osp.join(self.work_dir, self.timestamp)
+
+        self._log_dir = osp.join(self.work_dir, self.experiment_name)
         mmengine.mkdir_or_exist(self._log_dir)
-        # Used to reset registries location. See :meth:`Registry.build` for
-        # more details.
+        # Used to reset registries location. See :meth:`Registry.build` for more details.
         if default_scope is not None:
             default_scope = DefaultScope.get_instance(  # type: ignore
                 self._experiment_name,
-                scope_name=default_scope)
+                scope_name='src')
         self.default_scope = default_scope
+
+        # Since `get_instance` could return any subclass of ManagerMixin. The
+        # corresponding attribute needs a type hint.
+        self.logger = self.build_logger(log_level=log_level)
 
         # Build log processor to format message.
         log_processor = dict() if log_processor is None else log_processor
         self.log_processor = self.build_log_processor(log_processor)
-        # Since `get_instance` could return any subclass of ManagerMixin. The
-        # corresponding attribute needs a type hint.
-        self.logger = self.build_logger(log_level=log_level)
 
         # Collect and log environment information.
         self._log_env(env_cfg)
@@ -407,9 +428,9 @@ class Runner:
         if self.cfg:
             self.visualizer.add_config(self.cfg)
 
+        # flag to mark whether checkpoint has been loaded or resumed
         self._load_from = load_from
         self._resume = resume
-        # flag to mark whether checkpoint has been loaded or resumed
         self._has_loaded = False
 
         # build a model
@@ -444,8 +465,8 @@ class Runner:
         else:
             filename = f'{self.timestamp}.py'
 
-        if self.cfg.to_dict():
-            save_cfg_file = osp.join(self.work_dir, filename)
+        if self.cfg._cfg_dict:
+            save_cfg_file = osp.join(self._log_dir, filename)
             self.cfg.dump(save_cfg_file)
             self.logger.info(f"See full config in {save_cfg_file!r}.")
 
@@ -485,9 +506,10 @@ class Runner:
             log_processor=cfg.get('log_processor'),
             log_level=cfg.get('log_level', 'INFO'),
             visualizer=cfg.get('visualizer'),
-            default_scope=cfg.get('default_scope', 'mmengine'),
-            randomness=cfg.get('randomness', dict(seed=None)),
+            default_scope=cfg.get('default_scope'),
+            randomness=cfg.get('randomness', dict(seed=321)),
             experiment_name=cfg.get('experiment_name'),
+            use_new_lr=cfg.get('use_new_lr', False),
             cfg=cfg,
         )
 
@@ -681,8 +703,9 @@ class Runner:
         timestamp = torch.tensor(time.time(), dtype=torch.float64)
         # broadcast timestamp from 0 process to other processes
         broadcast(timestamp)
-        self._timestamp = time.strftime('%Y%m%d_%H%M%S',
-                                        time.localtime(timestamp.item()))
+        self._timestamp = time.strftime(
+            '%Y%m%d_%H%M%S',
+            time.localtime(timestamp.item()))
 
         # https://github.com/pytorch/pytorch/issues/973
         # set resource limit
@@ -720,6 +743,37 @@ class Runner:
             deterministic=deterministic,
             diff_rank_seed=diff_rank_seed)
 
+
+    def _log_env(self, env_cfg: dict) -> None:
+        """Logging environment information of the current task.
+
+        Args:
+            env_cfg (dict): The environment config of the runner.
+        """
+        # Collect and log environment information.
+        env = collect_env()
+        runtime_env = OrderedDict()
+        runtime_env.update(env_cfg)
+        runtime_env.update(self._randomness_cfg)
+        runtime_env['seed'] = self._seed
+        runtime_env['Distributed launcher'] = self._launcher
+        runtime_env['Distributed training'] = self._distributed
+        runtime_env['GPU number'] = self._world_size
+
+        env_info = '\n    ' + '\n    '.join(f'{k}: {v}'
+                                            for k, v in env.items())
+        runtime_env_info = '\n    ' + '\n    '.join(
+            f'{k}: {v}' for k, v in runtime_env.items())
+        dash_line = '-' * 60
+        self.logger.info('\n' + dash_line + '\nSystem environment:' +
+                         env_info + '\n'
+                         '\nRuntime environment:' + runtime_env_info + '\n' +
+                         dash_line + '\n')
+
+        if self.cfg._cfg_dict:
+            # self.logger.info(f'Config:\n{self.cfg.pretty_text}')
+            pass
+
     def build_logger(self,
                      log_level: Union[int, str] = 'INFO',
                      log_file: str = None,
@@ -749,9 +803,46 @@ class Runner:
 
         return MMLogger.get_instance(**log_cfg)  # type: ignore
 
+    def build_log_processor(
+            self, log_processor: Union[LogProcessor, Dict]) -> LogProcessor:
+        """Build test log_processor.
+
+        Examples of ``log_processor``:
+
+            # `LogProcessor` will be used
+            log_processor = dict()
+
+            # custom log_processor
+            log_processor = dict(type='CustomLogProcessor')
+
+        Args:
+            log_processor (LogProcessor or dict): A log processor or a dict
+            to build log processor. If ``log_processor`` is a log processor
+            object, just returns itself.
+
+        Returns:
+            :obj:`LogProcessor`: Log processor object build from
+            ``log_processor_cfg``.
+        """
+        if isinstance(log_processor, LogProcessor):
+            return log_processor
+        elif not isinstance(log_processor, dict):
+            raise TypeError(
+                'log processor should be a LogProcessor object or dict, but'
+                f'got {log_processor}')
+
+        log_processor_cfg = copy.deepcopy(log_processor)  # type: ignore
+
+        if 'type' in log_processor_cfg:
+            log_processor = LOG_PROCESSORS.build(log_processor_cfg)
+        else:
+            log_processor = LogProcessor(**log_processor_cfg)  # type: ignore
+
+        return log_processor  # type: ignore
+
     def build_message_hub(self,
                           message_hub: Optional[Dict] = None) -> MessageHub:
-        """Build a global acessible MessageHub.
+        """Build a global accessible MessageHub.
 
         Args:
             message_hub (dict, optional): A dict to build MessageHub object.
@@ -774,9 +865,9 @@ class Runner:
 
     def build_visualizer(
             self,
-            visualizer: Optional[Union[Visualizer,
-                                       Dict]] = None) -> Visualizer:
-        """Build a global asscessable Visualizer.
+            visualizer: Optional[Union[Visualizer, Dict]] = None
+    ) -> Visualizer:
+        """Build a global accessible Visualizer.
 
         Args:
             visualizer (Visualizer or dict, optional): A Visualizer object
@@ -1136,60 +1227,6 @@ class Runner:
             raise TypeError('optimizer wrapper should be an OptimWrapper '
                             f'object or dict, but got {optim_wrapper}')
 
-    def _build_param_scheduler(
-            self, scheduler: Union[_ParamScheduler, Dict, List],
-            optim_wrapper: OptimWrapper) -> List[_ParamScheduler]:
-        """Build parameter schedulers for a single optimizer.
-
-        Args:
-            scheduler (_ParamScheduler or dict or list): A Param Scheduler
-                object or a dict or list of dict to build parameter schedulers.
-            optim_wrapper (OptimWrapper): An optimizer wrapper object is
-                passed to construct ParamScheduler object.
-
-        Returns:
-            list[_ParamScheduler]: List of parameter schedulers build from
-            ``scheduler``.
-
-        Note:
-            If the train loop is built, when building parameter schedulers,
-            it supports setting the max epochs/iters as the default ``end``
-            of schedulers, and supports converting epoch-based schedulers
-            to iter-based according to the ``convert_to_iter_based`` key.
-        """
-        if not isinstance(scheduler, Sequence):
-            schedulers = [scheduler]
-        else:
-            schedulers = scheduler
-
-        param_schedulers = []
-        for scheduler in schedulers:
-            if isinstance(scheduler, _ParamScheduler):
-                param_schedulers.append(scheduler)
-            elif isinstance(scheduler, dict):
-                _scheduler = copy.deepcopy(scheduler)
-
-                # Set default end
-                if isinstance(self._train_loop, BaseLoop):
-                    default_end = self.max_epochs if _scheduler.get(
-                        'by_epoch', True) else self.max_iters
-                    _scheduler.setdefault('end', default_end)
-                    self.logger.debug(
-                        f'The `end` of {_scheduler["type"]} is not set. '
-                        'Use the max epochs/iters of train loop as default.')
-
-                param_schedulers.append(
-                    PARAM_SCHEDULERS.build(
-                        _scheduler,
-                        default_args=dict(
-                            optimizer=optim_wrapper,
-                            epoch_length=len(self.train_dataloader))))
-            else:
-                raise TypeError(
-                    'scheduler should be a _ParamScheduler object or dict, '
-                    f'but got {scheduler}')
-        return param_schedulers
-
     def build_param_scheduler(
             self, scheduler: Union[_ParamScheduler, Dict,
                                    List]) -> ParamSchedulerType:
@@ -1281,8 +1318,61 @@ class Runner:
 
             return param_schedulers
 
-    def build_evaluator(self, evaluator: Union[Dict, List,
-                                               Evaluator]) -> Evaluator:
+    def _build_param_scheduler(
+            self, scheduler: Union[_ParamScheduler, Dict, List],
+            optim_wrapper: OptimWrapper) -> List[_ParamScheduler]:
+        """Build parameter schedulers for a single optimizer.
+
+        Args:
+            scheduler (_ParamScheduler or dict or list): A Param Scheduler
+                object or a dict or list of dict to build parameter schedulers.
+            optim_wrapper (OptimWrapper): An optimizer wrapper object is
+                passed to construct ParamScheduler object.
+
+        Returns:
+            list[_ParamScheduler]: List of parameter schedulers build from
+            ``scheduler``.
+
+        Note:
+            If the train loop is built, when building parameter schedulers,
+            it supports setting the max epochs/iters as the default ``end``
+            of schedulers, and supports converting epoch-based schedulers
+            to iter-based according to the ``convert_to_iter_based`` key.
+        """
+        if not isinstance(scheduler, Sequence):
+            schedulers = [scheduler]
+        else:
+            schedulers = scheduler
+
+        param_schedulers = []
+        for scheduler in schedulers:
+            if isinstance(scheduler, _ParamScheduler):
+                param_schedulers.append(scheduler)
+            elif isinstance(scheduler, dict):
+                _scheduler = copy.deepcopy(scheduler)
+
+                # Set default end
+                if isinstance(self._train_loop, BaseLoop):
+                    default_end = self.max_epochs if _scheduler.get(
+                        'by_epoch', True) else self.max_iters
+                    _scheduler.setdefault('end', default_end)
+                    self.logger.debug(
+                        f'The `end` of {_scheduler["type"]} is not set. '
+                        'Use the max epochs/iters of train loop as default.')
+
+                param_schedulers.append(
+                    PARAM_SCHEDULERS.build(
+                        _scheduler,
+                        default_args=dict(
+                            optimizer=optim_wrapper,
+                            epoch_length=len(self.train_dataloader))))
+            else:
+                raise TypeError(
+                    'scheduler should be a _ParamScheduler object or dict, '
+                    f'but got {scheduler}')
+        return param_schedulers
+
+    def build_evaluator(self, evaluator: Union[Dict, List, Evaluator]) -> Evaluator:
         """Build evaluator.
 
         Examples of ``evaluator``::
@@ -1314,11 +1404,11 @@ class Runner:
         if isinstance(evaluator, Evaluator):
             return evaluator
         elif isinstance(evaluator, dict):
-            # if `metrics` in dict keys, it means to build customized evalutor
+            # if `metrics` in dict keys, it means to build customized evaluator
             if 'metrics' in evaluator:
                 evaluator.setdefault('type', 'Evaluator')
                 return EVALUATOR.build(evaluator)
-            # otherwise, default evalutor will be built
+            # otherwise, default evaluator will be built
             else:
                 return Evaluator(evaluator)  # type: ignore
         elif isinstance(evaluator, list):
@@ -1504,7 +1594,6 @@ class Runner:
         logger.info("Building training loop")
         if isinstance(loop, BaseLoop):
             return loop
-
         elif not isinstance(loop, dict):
             raise TypeError(
                 f'train_loop should be a Loop object or dict, but got {loop}')
@@ -1617,43 +1706,6 @@ class Runner:
 
         return loop  # type: ignore
 
-    def build_log_processor(
-            self, log_processor: Union[LogProcessor, Dict]) -> LogProcessor:
-        """Build test log_processor.
-
-        Examples of ``log_processor``:
-
-            # `LogProcessor` will be used
-            log_processor = dict()
-
-            # custom log_processor
-            log_processor = dict(type='CustomLogProcessor')
-
-        Args:
-            log_processor (LogProcessor or dict): A log processor or a dict
-            to build log processor. If ``log_processor`` is a log processor
-            object, just returns itself.
-
-        Returns:
-            :obj:`LogProcessor`: Log processor object build from
-            ``log_processor_cfg``.
-        """
-        if isinstance(log_processor, LogProcessor):
-            return log_processor
-        elif not isinstance(log_processor, dict):
-            raise TypeError(
-                'log processor should be a LogProcessor object or dict, but'
-                f'got {log_processor}')
-
-        log_processor_cfg = copy.deepcopy(log_processor)  # type: ignore
-
-        if 'type' in log_processor_cfg:
-            log_processor = LOG_PROCESSORS.build(log_processor_cfg)
-        else:
-            log_processor = LogProcessor(**log_processor_cfg)  # type: ignore
-
-        return log_processor  # type: ignore
-
     def train(self) -> nn.Module:
         """Launch training.
 
@@ -1673,12 +1725,19 @@ class Runner:
                 'If you want to validate your model, please make sure your '
                 'model has implemented `val_step`.')
 
-        if self._train_loop is None:
+        # if self._train_loop is None:
+        #     raise RuntimeError(
+        #         '`self._train_loop` should not be None when calling train '
+        #         'method. Please provide `train_dataloader`, `train_cfg`, '
+        #         '`optimizer` and `param_scheduler` arguments when '
+        #         'initializing runner.')
+
+        if not self.enough_to_train:
             raise RuntimeError(
-                '`self._train_loop` should not be None when calling train '
-                'method. Please provide `train_dataloader`, `train_cfg`, '
-                '`optimizer` and `param_scheduler` arguments when '
-                'initializing runner.')
+                f"It's not enough to train because got \n"
+                f"\ttrain_dataloader={self._train_dataloader} \n"
+                f'\ttrain_cfg={self._train_loop} \n'
+                f'\toptim_wrapper={self.optim_wrapper}.')
 
         self._train_loop = self.build_train_loop(self._train_loop)  # type: ignore
 
@@ -1689,12 +1748,11 @@ class Runner:
         self.scale_lr(self.optim_wrapper, self.auto_scale_lr)
 
         if self.param_schedulers is not None:
-            self.param_schedulers = self.build_param_scheduler(  # type: ignore
-                self.param_schedulers)  # type: ignore
+            self.param_schedulers = self.build_param_scheduler(self.param_schedulers)  # type: ignore
 
-        if self._val_loop is not None:
-            self._val_loop = self.build_val_loop(
-                self._val_loop)  # type: ignore
+        if self.enough_to_val:
+            self._val_loop = self.build_val_loop(self._val_loop)  # type: ignore
+
         # TODO: add a contextmanager to avoid calling `before_run` many times
         self.call_hook('before_run')
 
@@ -1731,6 +1789,14 @@ class Runner:
         Returns:
             dict: A dict of metrics on validation set.
         """
+        if not self.enough_to_val:
+            raise RuntimeError(
+                f"It's not enough to val because got \n"
+                f"\tval_dataloader={self._val_dataloader} \n"
+                f'\tval_cfg={self._val_loop}\n'
+                f'\tval_evaluator={self.val_evaluator}.'
+            )
+
         if self._val_loop is None:
             raise RuntimeError(
                 '`self._val_loop` should not be None when calling val method.'
@@ -1754,6 +1820,13 @@ class Runner:
         Returns:
             dict: A dict of metrics on testing set.
         """
+        if not self.enough_to_test:
+            self.logger.warning(
+                f"It's not enough to test because got \n"
+                f"\ttest_evaluator={self._test_dataloader}\n"
+                f'\ttest_cfg={self._test_loop}\n'
+                f'\ttest_dataloader={self._test_dataloader}.'
+            )
         if self._test_loop is None:
             raise RuntimeError(
                 '`self._test_loop` should not be None when calling test '
@@ -1783,13 +1856,13 @@ class Runner:
             if self._load_from is None:
                 # auto resume from the latest checkpoint
                 resume_from = find_latest_checkpoint(self.work_dir)
-                self.logger.info(f'Auto resumed from the latest checkpoint {resume_from}.')
-            elif self._load_from is not None:
+                self.logger.info(f'Auto resumed from the latest checkpoint {resume_from!r}.')
+            else:
                 # resume from the specified checkpoint
                 resume_from = self._load_from
 
         if resume_from is not None:
-            self.resume(resume_from)
+            self.resume(resume_from, resume_optimizer=not self.use_new_lr)
             self._has_loaded = True
         elif self._load_from is not None:
             self.load_checkpoint(self._load_from)
@@ -1876,9 +1949,9 @@ class Runner:
 
         # resume optimizer
         if 'optimizer' in checkpoint and resume_optimizer:
+            self.logger.info("Resume optimizer")
             self.optim_wrapper = self.build_optim_wrapper(self.optim_wrapper)
-            self.optim_wrapper.load_state_dict(  # type: ignore
-                checkpoint['optimizer'])
+            self.optim_wrapper.load_state_dict(checkpoint['optimizer'])
 
         # resume param scheduler
         if resume_param_scheduler and self.param_schedulers is None:
@@ -2344,35 +2417,6 @@ class Runner:
                 'contains key `type`, it means a scheduler config for a '
                 'single optimizer. If it does not contain key `type`, it '
                 'means multiple lists of schedulers for multiple optimizers.')
-
-    def _log_env(self, env_cfg: dict) -> None:
-        """Logging environment information of the current task.
-
-        Args:
-            env_cfg (dict): The environment config of the runner.
-        """
-        # Collect and log environment information.
-        env = collect_env()
-        runtime_env = OrderedDict()
-        runtime_env.update(env_cfg)
-        runtime_env.update(self._randomness_cfg)
-        runtime_env['seed'] = self._seed
-        runtime_env['Distributed launcher'] = self._launcher
-        runtime_env['Distributed training'] = self._distributed
-        runtime_env['GPU number'] = self._world_size
-
-        env_info = '\n    ' + '\n    '.join(f'{k}: {v}'
-                                            for k, v in env.items())
-        runtime_env_info = '\n    ' + '\n    '.join(
-            f'{k}: {v}' for k, v in runtime_env.items())
-        dash_line = '-' * 60
-        self.logger.info('\n' + dash_line + '\nSystem environment:' +
-                         env_info + '\n'
-                         '\nRuntime environment:' + runtime_env_info + '\n' +
-                         dash_line + '\n')
-
-        if self.cfg._cfg_dict:
-            self.logger.info(f'Config:\n{self.cfg.pretty_text}')
 
     def _maybe_compile(self, target: str) -> None:
         """Use `torch.compile` to optimize model/wrapped_model."""

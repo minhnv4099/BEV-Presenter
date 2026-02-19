@@ -4,7 +4,7 @@
 #
 import traceback
 import warnings
-from typing import Optional, Any
+from typing import Optional
 
 from src.typing import ConfigType
 from src.utils.logging import getLogger

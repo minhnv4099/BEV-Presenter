@@ -106,8 +106,6 @@ class CustomBaseTransformerLayer(BaseModule):
 
         self.batch_first = batch_first
 
-        if operation_order is None:
-            operation_order = self.operation_order
         assert set(operation_order) and set(operation_order) == self.available_operations,  \
             f'The operation_order of {self.__class__.__name__} should ' \
             f'contains all four operation types: "{self.available_operations}"'

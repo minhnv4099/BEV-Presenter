@@ -62,7 +62,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
         value: Optional[Tensor] = None,
         *args,
         query_pos: Optional[Tensor] = None,
-        # key_pos: Optional[Tensor] = None,
+        key_pos: Optional[Tensor] = None,
         attn_masks: Optional[Tensor] = None,
         query_key_padding_mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
@@ -104,12 +104,15 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
                 value,
                 *args,
                 query_pos=query_pos,
+                key_pos=key_pos,
+                attn_masks=attn_masks,
                 reference_points=reference_points_input,
                 key_padding_mask=key_padding_mask,
                 spatial_shapes=spatial_shapes,
                 level_start_index=level_start_index,
                 **kwargs
             )
+            # (bs, num_query, embed_dim)
             output = output.permute(1, 0, 2)
 
             if reg_branches is not None:
@@ -127,7 +130,9 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
 
                 reference_points = new_reference_points.detach()
 
+            # (num_query, bs, embed_dim)
             output = output.permute(1, 0, 2)
+
             if self.return_intermediate:
                 intermediate.append(output)
                 intermediate_reference_points.append(reference_points)
@@ -184,9 +189,6 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
             norm_cfg=norm_cfg,
             operation_order=operation_order,
             act_cfg=act_cfg,
-            # feedforward_channels=feedforward_channels,
-            # ffn_dropout=ffn_dropout,
-            # ffn_num_fcs=ffn_num_fcs,
             **kwargs
         )
 
@@ -257,28 +259,14 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
 
         for operation in self.operation_order:
             if operation == 'self_attn':
-                # query = self.attentions[attn_index](
-                #     query,
-                #     query,
-                #     query,
-                #     query_pos,
-                #     key_pos,
-                #     identity if self.pre_norm else None,
-                #     attn_mask=attn_masks[attn_index],
-                # )
                 query = self.attentions[attn_index](
                     query,
-                    key,
-                    value,
+                    query,
+                    query,
                     identity if self.pre_norm else None,
                     query_pos=query_pos,
                     key_pos=key_pos,
-                    reference_points=reference_points,
-                    # mask=mask,
-                    attn_mask=attn_masks[attn_index],
-                    key_padding_mask=key_padding_mask,
-                    # level_start_index=level_start_index,
-                    **kwargs)
+                    attn_mask=attn_masks[attn_index])
                 attn_index += 1
                 identity = query
 
@@ -286,17 +274,14 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                 query = self.norms[norm_index](query)
                 norm_index += 1
 
-            # spaital cross attention
             elif operation == 'cross_attn':
                 query = self.attentions[attn_index](
                     query,
-                    key,
                     value,
                     identity if self.pre_norm else None,
                     query_pos=query_pos,
                     key_pos=key_pos,
                     reference_points=reference_points,
-                    # mask=mask,
                     attn_mask=attn_masks[attn_index],
                     key_padding_mask=key_padding_mask,
                     # level_start_index=level_start_index,

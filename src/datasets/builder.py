@@ -11,7 +11,9 @@ import torch
 from mmengine.dataset.utils import default_collate
 from mmengine.dist import get_dist_info
 from mmengine.registry.build_functions import build_from_cfg
+from mmengine.dataset.utils import pseudo_collate
 from torch.utils.data import DataLoader
+from .collate_func import train_collate, test_collate
 
 from .samplers.group_sampler import DistributedGroupSampler, GroupSampler
 from .samplers.distributed_sampler import DistributedSampler
@@ -51,6 +53,7 @@ def build_dataloader(
         DataLoader: A PyTorch dataloader.
     """
     rank, world_size = get_dist_info()
+    sampler = None
     if dist:
         # DistributedGroupSampler will definitely shuffle the data to satisfy
         # that images on each GPU are in the same group
@@ -94,35 +97,15 @@ def build_dataloader(
     data_loader = DataLoader(
         dataset,
         batch_size=batch_size,
-        # sampler=sampler,
+        sampler=sampler,
         num_workers=num_workers,
-        collate_fn=collate_func,
+        collate_fn=train_collate,
         pin_memory=False,
         worker_init_fn=init_fn,
         persistent_workers=(num_workers > 0),
         **kwargs)
 
     return data_loader
-
-
-def collate_func(data_batch: Sequence[dict]):
-    img = []
-    img_metas = []
-    gt_bboxes_3d = []
-    gt_labels_3d = []
-
-    for sample in data_batch:
-        img.append(sample['img'])
-        img_metas.append(sample['img_metas'])
-        gt_bboxes_3d.append(sample['gt_bboxes_3d'])
-        gt_labels_3d.append(sample['gt_labels_3d'])
-
-    return {
-        'img': torch.stack(img, dim=0).to(get_device()),
-        'img_metas': img_metas,
-        'gt_bboxes_3d': gt_bboxes_3d,
-        'gt_labels_3d': gt_labels_3d
-    }
 
 
 def worker_init_fn(worker_id, num_workers, rank, seed):

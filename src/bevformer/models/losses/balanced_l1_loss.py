@@ -56,7 +56,6 @@ def balanced_l1_loss(pred,
     return loss
 
 
-@MODELS.register_module()
 @LOSSES.register_module()
 class BalancedL1Loss(nn.Module):
     """Balanced L1 Loss.
@@ -130,7 +129,6 @@ class BalancedL1Loss(nn.Module):
         return loss_bbox
 
 
-@MODELS.register_module()
 @LOSSES.register_module()
 class L1Loss(BalancedL1Loss):
     """Balanced L1 Loss.

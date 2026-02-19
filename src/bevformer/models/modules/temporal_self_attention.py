@@ -154,6 +154,7 @@ class TemporalSelfAttention(BaseModule):
         spatial_shapes: Optional[Tensor] = None,
         level_start_index: Optional[Tensor] = None,
         flag: str = 'decoder',
+        batch_first: bool = True,
         **kwargs
     ):
         """Forward Function of MultiScaleDeformAttention.
@@ -206,7 +207,7 @@ class TemporalSelfAttention(BaseModule):
             query = query.permute(1, 0, 2)
             value = value.permute(1, 0, 2)
 
-        bs,  num_query, embed_dims = query.shape
+        bs, num_query, embed_dims = query.shape
         _, num_value, _ = value.shape
         assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
         assert self.num_bev_queue == 2
@@ -236,16 +237,14 @@ class TemporalSelfAttention(BaseModule):
 
         # (bs, num_query, num_heads, num_bev_queue, num_levels, num_points)
         attention_weights = attention_weights.view(
-            bs, num_query, self.num_heads,
-            self.num_bev_queue, self.num_levels,
-            self.num_points)
+            bs, num_query, self.num_heads, self.num_bev_queue, self.num_levels, self.num_points)
 
         # (bs, num_bev_queue, num_query, num_heads, num_levels, num_points)
         # (bs*num_bev_queue, num_query, num_heads, num_levels, num_points)
         attention_weights = attention_weights.permute(0, 3, 1, 2, 4, 5)\
             .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points).contiguous()
-        # (bs, n_bev_queue, num_query, n_heads, n_levels, n_points, 2)
-        # (bs*n_bev_queue, num_query, n_heads, n_levels, n_points, 2)
+        # (bs, n_bev_queue, num_query, num_heads, n_levels, n_points, 2)
+        # (bs*n_bev_queue, num_query, num_heads, n_levels, n_points, 2)
         sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6)\
             .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points, 2)
 

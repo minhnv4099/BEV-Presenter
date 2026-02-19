@@ -39,8 +39,7 @@ def py_sigmoid_focal_loss(
     """
     pred_sigmoid = pred.sigmoid()
     target = target.type_as(pred)
-    # logger.info(target.shape)
-    # logger.info(pred_sigmoid.shape)
+
     pt = (1 - pred_sigmoid) * target + pred_sigmoid * (1 - target)
     focal_weight = (alpha * target + (1 - alpha) *
                     (1 - target)) * pt.pow(gamma)
@@ -171,7 +170,6 @@ def sigmoid_focal_loss(
     return loss
 
 
-@MODELS.register_module()
 @LOSSES.register_module()
 class FocalLoss(nn.Module):
 

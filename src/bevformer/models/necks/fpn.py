@@ -6,8 +6,7 @@ from src.utils.fp16_utils import auto_fp16
 from src.registry import NECKS, MODELS
 
 
-@MODELS.register_module()
-@NECKS.register_module()
+@NECKS.register_module(force=True)
 class FPN(BaseModule):
     r"""Feature Pyramid Network.
 
