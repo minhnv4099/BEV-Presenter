@@ -6,7 +6,6 @@ from mmcv.image import imread
 from mmcv.transforms.loading import LoadAnnotations
 from .base_transform import BaseTransform
 from src.registry import PIPELINES
-from src.utils.image import imshow
 
 
 @PIPELINES.register_module()

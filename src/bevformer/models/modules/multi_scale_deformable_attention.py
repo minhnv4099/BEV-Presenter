@@ -54,7 +54,7 @@ class CustomMSDeformableAttention(BaseModule):
         self,
         embed_dims: int = 256,
         num_heads: int = 8,
-        num_levels: int = 4,
+        num_levels: int = 1,
         num_points: int = 4,
         im2col_step: int = 64,
         dropout: float = 0.1,
@@ -132,6 +132,7 @@ class CustomMSDeformableAttention(BaseModule):
         value: Optional[Tensor] = None,
         identity: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
+        key_pos: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
         reference_points: Optional[Tensor] = None,
         spatial_shapes: Optional[Tensor] = None,
@@ -174,8 +175,6 @@ class CustomMSDeformableAttention(BaseModule):
         Returns:
              Tensor: forwarded results with shape [num_query, bs, embed_dims].
         """
-        if value is None:
-            value = query
         if identity is None:
             identity = query
         if query_pos is not None:
@@ -201,7 +200,6 @@ class CustomMSDeformableAttention(BaseModule):
             bs, num_query, self.num_heads, self.num_levels * self.num_points)
         # weights cross every points in all level feature in each head
         attention_weights = attention_weights.softmax(-1)
-
         attention_weights = attention_weights.view(
             bs, num_query, self.num_heads, self.num_levels, self.num_points)
 

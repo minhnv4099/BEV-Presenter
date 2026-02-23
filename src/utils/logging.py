@@ -27,12 +27,36 @@ logging.basicConfig(
 
 
 # avoid conflicting name with get_logger from built-in logging
-def getLogger(name: Optional[str] = None, level: Union[int, str] = logging.INFO) -> logging.Logger:
+def getLogger(
+    name: Optional[str] = None,
+    level: Union[int, str] = logging.INFO,
+    log_file: Optional[str] = None,
+) -> logging.Logger:
 
     if name is None:
         name = __name__
 
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    formatter = logging.Formatter(
+        "[%(asctime)s][%(levelname)s][%(name)s] - %(message)s #%(lineno)d"
+    )
+
+    # File handler
+    if log_file is not None:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    logger = MMLogger(name=__name__)
+
+    return logger
 
 
 class FilterDuplicateWarning(logging.Filter):
@@ -79,7 +103,7 @@ class MyFormatter(logging.Formatter):
     _color_mapping: dict = dict(
         ERROR='red', WARNING='yellow', INFO='white', DEBUG='green')
 
-    def __init__(self, color: bool = True, blink: bool = True, **kwargs):
+    def __init__(self, color: bool = True, blink: bool = False, **kwargs):
         super().__init__(**kwargs)
         assert not (not color and blink), (
             'blink should only be available when color is True')
@@ -199,10 +223,10 @@ class MMLogger(Logger, ManagerMixin):
 
     def __init__(self,
                  name: str,
-                 logger_name='mmengine',
+                 logger_name='bevformer',
                  log_file: Optional[str] = None,
                  log_level: Union[int, str] = 'INFO',
-                 file_mode: str = 'w',
+                 file_mode: str = 'a',
                  distributed=False):
         Logger.__init__(self, logger_name)
         ManagerMixin.__init__(self, name)
@@ -211,14 +235,13 @@ class MMLogger(Logger, ManagerMixin):
             log_level = logging._nameToLevel[log_level]
         global_rank = _get_rank()
         device_id = _get_device_id()
-
         # Config stream_handler. If `rank != 0`. stream_handler can only
         # export ERROR logs.
         stream_handler = logging.StreamHandler(stream=sys.stdout)
         # `StreamHandler` record month, day, hour, minute, and second
         # timestamp.
         stream_handler.setFormatter(
-            MMFormatter(color=True, datefmt='%m/%d %H:%M:%S'))
+            MyFormatter(color=True, datefmt='%m/%d %H:%M:%S'))
         # Only rank0 `StreamHandler` will log messages below error level.
         if global_rank == 0:
             stream_handler.setLevel(log_level)
@@ -254,7 +277,7 @@ class MMLogger(Logger, ManagerMixin):
                 # and second timestamp. file_handler will only record logs
                 # without color to avoid garbled code saved in files.
                 file_handler.setFormatter(
-                    MMFormatter(color=False, datefmt='%Y/%m/%d %H:%M:%S'))
+                    MyFormatter(color=True, datefmt='%Y/%m/%d %H:%M:%S'))
                 file_handler.setLevel(log_level)
                 file_handler.addFilter(FilterDuplicateWarning(logger_name))
                 self.handlers.append(file_handler)

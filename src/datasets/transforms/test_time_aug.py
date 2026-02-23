@@ -44,8 +44,8 @@ class MultiScaleFlipAug3D(BaseTransform):
         self.transforms = Compose(transforms)
         self.img_scale = img_scale if isinstance(img_scale, list) else [img_scale]
         self.pts_scale_ratio = pts_scale_ratio \
-            if isinstance(pts_scale_ratio, list) else\
-            [float(pts_scale_ratio)]
+            if isinstance(pts_scale_ratio, list) \
+            else [float(pts_scale_ratio)]
 
         assert mmengine.is_list_of(self.img_scale, tuple)
         assert mmengine.is_list_of(self.pts_scale_ratio, float)
@@ -63,8 +63,7 @@ class MultiScaleFlipAug3D(BaseTransform):
         if (self.flip and not any([(t['type'] == 'RandomFlip3D'
                                     or t['type'] == 'RandomFlip')
                                    for t in transforms])):
-            warnings.warn(
-                'flip has no effect when RandomFlip is not in transforms')
+            warnings.warn('flip has no effect when RandomFlip is not in transforms')
 
     def transform(self, results: Dict) -> List[Dict]:
         """Call function to augment common fields in results.
@@ -99,13 +98,10 @@ class MultiScaleFlipAug3D(BaseTransform):
                                 _results = deepcopy(results)
                                 _results['scale'] = scale
                                 _results['flip'] = flip
-                                _results['pcd_scale_factor'] = \
-                                    pts_scale_ratio
+                                _results['pcd_scale_factor'] = pts_scale_ratio
                                 _results['flip_direction'] = direction
-                                _results['pcd_horizontal_flip'] = \
-                                    pcd_horizontal_flip
-                                _results['pcd_vertical_flip'] = \
-                                    pcd_vertical_flip
+                                _results['pcd_horizontal_flip'] = pcd_horizontal_flip
+                                _results['pcd_vertical_flip'] = pcd_vertical_flip
                                 data = self.transforms(_results)
                                 aug_data_list.append(data)
 

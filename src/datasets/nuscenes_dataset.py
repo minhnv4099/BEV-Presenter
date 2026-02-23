@@ -126,20 +126,20 @@ class CustomNuScenesDataset(Dataset):
 
     def __init__(
         self,
+        ann_file: str,
+        data_root: str,
         queue_length: int = 4,
         bev_size: tuple[int, int] = (200, 200),
         overlap_test: bool = False,
-        ann_file: Optional[str] = None,
-        data_root: Optional[str] = None,
         debug_pipeline: bool = False,
         modality: dict = dict(use_lidar=False, use_camera=True),
         pipeline: List[Union[dict, Callable]] = (),
-        test_mode: bool = True,
+        test_mode: bool = False,
         with_velocity: bool = True,
         load_type: str = 'fov_image_based',
         box_type_3d: str = "CAMERA",
         classes: list[str] = None,
-        frames: Sequence[int] = (0, -1, -2, -3),
+        frames: Sequence[int] = (),
         filter_empty_gt: bool = True,
         *args, **kwargs
     ):
@@ -194,19 +194,51 @@ class CustomNuScenesDataset(Dataset):
 
             return data
 
+    def pre_pipeline(self, results):
+        """Initialization before data preparation.
+        Args:
+            results (dict): Dict before data preprocessing.
+                - img_fields (list): Image fields.
+                - bbox3d_fields (list): 3D bounding boxes fields.
+                - pts_mask_fields (list): Mask fields of points.
+                - pts_seg_fields (list): Mask fields of point segments.
+                - bbox_fields (list): Fields of bounding boxes.
+                - mask_fields (list): Fields of masks.
+                - seg_fields (list): Segment fields.
+                - box_type_3d (str): 3D box type.
+                - box_mode_3d (str): 3D box mode.
+        """
+        results['img_prefix'] = ''
+        results['seg_prefix'] = ''
+        results['proposal_file'] = ''
+        results['img_fields'] = []
+        results['bbox3d_fields'] = []
+        results['pts_mask_fields'] = []
+        results['pts_seg_fields'] = []
+        results['bbox_fields'] = []
+        results['mask_fields'] = []
+        results['seg_fields'] = []
+        results['box_type_3d'] = self.box_type_3d
+        results['box_mode_3d'] = self.box_mode_3d
+
     def prepare_test_data(self, index) -> TestSampleType:
-        """Prepare data for testing.
+        """Prepare data for testing with augmentation.
 
         Args:
             index (int): Index for accessing the target data.
 
         Returns:
-            dict: Testing data dict of the corresponding index.
+            dict: Testing data of the corresponding index.
+            Dict with keys:
+
+                - `img`: list of `n_aug` tensor shape of `(n_queue, n_cam, c, h, w)`.
+                - `img_metas`: list of `n_aug` dict of `n_queue`. See `med:'get_data_info'` for fields in each element.
         """
         # another way to gather data queue
         data_queue: OrderedDict[int, list[dict]] = OrderedDict()
         input_dict = self.get_data_info(index)
         cur_scene_token = input_dict['scene_token']
+        self.pre_pipeline(input_dict)
         example = self.pipeline(input_dict)
         data_queue[0] = example
 
@@ -216,6 +248,7 @@ class CustomNuScenesDataset(Dataset):
                 continue
             input_dict = self.get_data_info(chosen_idx)
             if input_dict['scene_token'] == cur_scene_token:
+                self.pre_pipeline(input_dict)
                 example = self.pipeline(input_dict)
                 data_queue[frame_idx] = example
 
@@ -241,6 +274,12 @@ class CustomNuScenesDataset(Dataset):
             index (int): Index for accessing the target data.
         Returns:
             dict: Training data dict of the corresponding index.
+            Dict with keys:
+
+                - `img`: tensor shape of `(n_queue, n_cam, c, h, w)`.
+                - `img_metas`: dict of `n_queue`. See :med:`get_data_info` for fields in each element.
+                - `gt_bboxes_3d`: group truth bbox.
+                - `gt_labels_3d`: ground truth labels.
         """
         queue = []
         index_list = list(range(index - self.queue_length, index))
@@ -254,7 +293,7 @@ class CustomNuScenesDataset(Dataset):
             if input_dict is None:
                 return None
 
-            # self.pre_pipeline(input_dict)
+            self.pre_pipeline(input_dict)
             example = self.pipeline(input_dict)
 
             if self.filter_empty_gt and (example is None or len(example['gt_labels_3d']) == 0):
@@ -281,6 +320,10 @@ class CustomNuScenesDataset(Dataset):
                 - lidar2img (list[np.ndarray], optional): Transformations \
                     from lidar to different cameras.
                 - ann_info (dict): Annotation info.
+                - img_filename (list): List of num_cam.
+                - lidar2img (list): List of num_cam.
+                - cam_intrinsic (list): List of num_cam.
+                - lidar2cam (list): List of num_cam.
         """
         data_info = self.data_infos[index]
         input_dict = dict(
@@ -353,8 +396,7 @@ class CustomNuScenesDataset(Dataset):
         Returns:
             dict: Annotation information consists of the following keys:
 
-                - gt_bboxes_3d (:obj:`LiDARInstance3DBoxes`):
-                  3D ground truth bboxes.
+                - gt_bboxes_3d (:obj:`LiDARInstance3DBoxes`): 3D ground truth bboxes.
                 - gt_labels_3d (np.ndarray): Labels of ground truths.
         """
         # ann_info = super().parse_ann_info(info)
@@ -437,15 +479,16 @@ class CustomNuScenesDataset(Dataset):
 
     def union2one(self, queue: list[dict]):
         """Combine list of samples into dict.
+        Only operate keys `img` and `img_metas`, keep the rest untouched.
 
         Args:
             queue (list[dict]): List of dict, each presents for one sample.
         Returns:
-            A dictionary with keys
+            dict: A dictionary with combined keys:
 
-            * `img`: Tensor of pixel values.
-            * `img_metas`: Dict of `n_queue` dict about sample metadata.
-            * `gt_bboxes_3d`:
+                - `img`: tensor shape of `(n_queue, n_cam, c, h, w)`.
+                - `img_metas`: dict of `n_queue`. See `med:'get_data_info'` for fields in each element.
+                - And the rest.
         """
         metas_map = {}
         prev_scene_token = None
@@ -470,7 +513,7 @@ class CustomNuScenesDataset(Dataset):
                 prev_angle = copy.deepcopy(tmp_angle)
 
         imgs_list = [torch.from_numpy(np.array(each['img'])) for each in queue]
-        # still keep remaining keys 'gt_bboxes_3d', 'gt_labels_3d'
+        # still keep remaining keys 'gt_bboxes_3d', 'gt_labels_3d' in the last element queue
         # combine img and img_meta
         queue[-1]['img'] = torch.stack(imgs_list, dim=0).permute(0, 1, 4, 2, 3)
         queue[-1]['img_metas'] = metas_map

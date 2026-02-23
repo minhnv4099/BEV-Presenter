@@ -13,10 +13,7 @@ import torch
 from torch import Tensor
 from torch.version import __version__ as TORCH_VERSION
 
-from src.registry import (
-    TRANSFORMER_LAYERS,
-    TRANSFORMER_BLOCKS
-)
+from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
 from mmengine.utils.version_utils import digit_version
 
 from src.utils.logging import getLogger
@@ -48,7 +45,6 @@ class BEVFormerEncoder(TransformerLayerSequence):
         return_intermediate: bool = False,
         transformerlayers: Optional[ConfigType] = None,
         num_layers: int = 6,
-        dataset_type: str = 'nuscenes',
         **kwargs
     ):
         super(BEVFormerEncoder, self).__init__(
@@ -73,7 +69,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
         device='cpu',
         dtype=torch.float
     ) -> Tensor:
-        """Get the reference points used in SCA and TSA.
+        """Get the reference points for bev query used in SCA and TSA.
         The points are range 0 -> 1 relative and uniform to bev plane size.
         Args:
             H: Height of bev plane.
@@ -81,14 +77,14 @@ class BEVFormerEncoder(TransformerLayerSequence):
             Z: Height of a pillar.
             bs: Batch size.
             num_points_in_pillar: Sample D points uniformly in each pillar.
-            device (obj:`device`): The device where ``reference_points`` should be.
+            device (:obj:`device`): The device where ``reference_points`` should be.
             dtype (:obj:`dtype`): The type ``reference_points`` should be.
             dim: Type of reference point: 2D or 3D.
         Returns:
             Tensor of uniform reference points w.r.t. bev plane (normalized by `H`, `W`, `Z`).
 
-                - Has shape `(bs, num_points_in_pillar, HxW, 3)` if ``3d``.
-                - Has shape `(bs, HxW, 1, 2)` if ``2d``
+                - Shape `(bs, num_points_in_pillar, HxW, 3)` if ``3d``, points for every points in pillar.
+                - Shape `(bs, HxW, 1, 2)` if ``2d``, reference points for every bev query.
         """
         # reference points in 3D space, used in spatial cross-attention (SCA)
         if dim == '3d':
@@ -139,25 +135,28 @@ class BEVFormerEncoder(TransformerLayerSequence):
         pc_range: Sequence[float],
         img_metas: list[dict]
     ) -> tuple[Tensor, Tensor]:
-        """Get the normalized reference points on the camera views.
+        """Get 3D reference points of pillars to produce
+         the 2D normalized reference points that are projected onto the camera views.
         Args:
             reference_points (`Tensor`):
-                The 3D relative bev reference points (0 -> 1) uniformly to bev_h, bev_w, Z.
-                Results of ``self.get_reference_points``.
-                Shape of `(bs, num_points_in_pillar, H*W [num_query], 3)`
+                The 3D relative and normalized bev reference points (0 -> 1) uniformly to bev_h, bev_w, Z.
+                Results of :med:`get_reference_points`.
+                Shape of `(bs, num_points_in_pillar, n_bev_query, 3)`
             pc_range (`Sequence[float]`):
                 Point cloud range.
             img_metas (`list[dict]`):
                 List of `bs` of `n_cam` (metadata).
         Returns:
-            Tuple of 2 tensors
+            tuple[Tensor]: Tuple of 2 tensors:
 
                 **Coordinates of projected references points on views**:
                     Projected reference points from 3D -> 2D.
-                    Relative and normalized w.r.t. image shape. Used by re-scale to get coordinates w.r.t each feature level.
-                    Shape `(num_cam, bs, H*W, num_points_in_pillar, 2)`.
-                **BEV mask**: Contains information whether the ``point`` hit that ``cam`` in that ``sample`` at that ``level``.
-                    Shape of `(num_cam, bs, H*W, num_points_in_pillar)`.
+                    Relative and normalized w.r.t. image shape.
+                    Used by re-scale to get coordinates w.r.t each feature level.
+                    Shape `(num_cam, bs, n_bev_query, num_points_in_pillar, 2)`.
+                **BEV mask**:
+                    Contains information whether the ``point`` hit that ``cam`` in that ``sample`` at that ``level``.
+                    Shape `(num_cam, bs, n_bev_query, num_points_in_pillar)`.
         """
         # NOTE: close tf32 here.
         allow_tf32 = torch.backends.cuda.matmul.allow_tf32
@@ -176,7 +175,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
         reference_points = reference_points.clone()
         # compute real world location of reference points in bev plane, origin is center
         # each cell in bev plane cover an area in real world.
-        # bev-relative * actual axis length -> real points in meter from left to right, ...
+        # bev-relative * actual axis length -> real points in meter from left to right
         # + negative left -> actual coordinate w.r.t. ego car whose location is the origin (0,0).
         # Example:
         # (0.1, 0.2, ... 1) * 10 meters -> (0, 1, 2, ... 10 meters)
@@ -215,8 +214,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
         reference_points_cam = torch.matmul(
             lidar2img.to(torch.float32),
             reference_points.to(torch.float32)
-        )
-        reference_points_cam = reference_points_cam.squeeze(-1)
+        ).squeeze(-1)
 
         eps = 1e-5
         # compare on z-axis
@@ -227,6 +225,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
         # divide [x y] by zij to get [xij yij] pixel coordinates in image
         # divide eps to avoid divide 0
         # -> `(D, bs, num_cam, H*W, 2)`
+        # TODO: visualize reference_points_cam on camera views to see points.
         reference_points_cam = reference_points_cam[..., 0:2] / torch.maximum(
             reference_points_cam[..., 2:3], torch.ones_like(reference_points_cam[..., 2:3]) * eps)
 
@@ -269,8 +268,8 @@ class BEVFormerEncoder(TransformerLayerSequence):
         *args,
         bev_h: int,
         bev_w: int,
-        spatial_shapes: Tensor,
         bev_pos: Optional[Tensor] = None,
+        spatial_shapes: Tensor,
         level_start_index: Optional[Tensor] = None,
         valid_ratios: Optional[Sequence[float]] = None,
         prev_bev: Optional[Tensor] = None,
@@ -290,6 +289,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
             bev_h (int): Height of bev plane.
             bev_w (int): Width of bev plane.
             bev_pos (`Tensor`): Position embeddings of bev.
+                Shape of `(num_query, bs, embed_dims)`.
             spatial_shapes (Tensor): Spatial shape of features in
                 different levels. With shape (num_levels, 2),
                 last dimension represents (h, w).
@@ -300,9 +300,9 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 The previous BEV feature with shape `(num_query, bs, embed_dims)`.
             shift (Tensor): Shape of [1, 2]
         Returns:
-            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+            Tensor: Results with shape `(num_query, bs, embed_dims)` when
                 return_intermediate is `False`, otherwise it has shape
-                [num_layers, num_query, bs, embed_dims].
+                `[num_layers, num_query, bs, embed_dims]`.
         """
         output = bev_query
         intermediate = []
@@ -319,6 +319,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
             bev_h, bev_w, dim='2d', bs=bev_query.size(1), 
             device=bev_query.device, dtype=bev_query.dtype)
 
+        # 2d reference points on multi-views
         reference_points_cam, bev_mask = self.point_sampling(
             reference_points=ref_3d,
             pc_range=self.pc_range,
@@ -344,11 +345,11 @@ class BEVFormerEncoder(TransformerLayerSequence):
             # (num_query, bs, embed_dims) -> (bs, num_query, embed_dims)
             prev_bev = prev_bev.permute(1, 0, 2)
             prev_bev = torch.stack(
-                [prev_bev, bev_query], 1).reshape(bs*2, num_query, -1)
+                [prev_bev, bev_query], 1).reshape(bs * 2, num_query, -1)
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
                 bs*2, num_query, num_bev_level, 2)
         else:
-            # prev_bev = torch.stack([bev_query, bev_query], 1).reshape(bs * 2, num_query, -1)
+            prev_bev = torch.stack([bev_query, bev_query], 1).reshape(bs * 2, num_query, -1)
             hybird_ref_2d = torch.stack([ref_2d, ref_2d], 1).reshape(
                 bs*2, num_query, num_bev_level, 2)
 
@@ -415,9 +416,6 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
         ffn_cfgs: Optional[ConfigType] = None,
         norm_cfg: ConfigType = dict(type='LN'),
         operation_order: Optional[Sequence[str]] = None,
-        feedforward_channels: int = 1024,
-        ffn_dropout: float = 0.0,
-        ffn_num_fcs: int = 2,
         act_cfg=dict(type='ReLU', inplace=True),
         **kwargs
     ):
@@ -431,9 +429,6 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
             norm_cfg=norm_cfg,
             operation_order=operation_order,
             act_cfg=act_cfg,
-            # feedforward_channels=feedforward_channels,
-            # ffn_dropout=ffn_dropout,
-            # ffn_num_fcs=ffn_num_fcs,
             **kwargs
         )
         self.fp16_enabled = False
@@ -470,15 +465,18 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
         Args:
             query (Tensor):
                 The input query with shape [num_queries, bs, embed_dims]
-                if self.batch_first is False, else `[bs, num_queries embed_dims]`.
+                if self.batch_first is False, else `[bs, num_queries, embed_dims]`.
             key (Tensor):
                 Input multi-camera features with shape `(num_cam, num_value, bs, embed_dims)`.
             value (Tensor):
                 Input multi-camera features with shape typically same as ``key``.
-            bev_pos (Tensor): The positional encoding for `bev`.
+            bev_pos (Tensor): The positional encoding for `bev`
+                shape `(bs, num_query, embed_dims)`
             query_pos (Tensor): The positional encoding for `query`.
+                Shape `[bs, num_queries, embed_dims]`.
                 Default: None.
             key_pos (Tensor): The positional encoding for `key`.
+                Shape `[bs, n_key, embed_dims]`.
                 Default: None.
             attn_masks (List[Tensor] | None): 2D Tensor used in
                 calculation of corresponding attention. The length of
@@ -489,10 +487,10 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
                 Defaults to None.
             ref_2d (Tensor):
                 2D reference points in bev plane used for temporal-self attention (TSA).
-                Shape `(bs*2, num_bew_query, num_bev_level [1], 2)`
+                Shape `(bs*2, num_bev_query, num_bev_level [1], 2)`
             ref_3d (Tensor):
                 3D reference point in space used for spatial-cross attention (SCA).
-                Shape `(bs, D, num_bew_query, 3)`, `D = num_points_in_pillar`.
+                Shape `(bs, D, num_bev_query, 3)`, `D = num_points_in_pillar`.
             bev_h (int): Height of bev plane.
             bev_w (int): Width of bev plane.
             reference_points_cam (Tensor):
@@ -543,12 +541,11 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
                     prev_bev,
                     identity if self.pre_norm else None,
                     query_pos=bev_pos,
-                    key_pos=bev_pos,
+                    key_pos=key_pos,
                     reference_points=ref_2d,
                     attn_mask=attn_masks[attn_index],
                     key_padding_mask=query_key_padding_mask,
-                    spatial_shapes=torch.tensor(
-                        [[bev_h, bev_w]], device=query.device),
+                    spatial_shapes=torch.tensor([[bev_h, bev_w]], device=query.device),
                     level_start_index=torch.tensor([0], device=query.device),
                     **kwargs
                 )
@@ -568,7 +565,7 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
                     identity if self.pre_norm else None,
                     query_pos=query_pos,
                     key_pos=key_pos,
-                    reference_points=ref_3d,
+                    # reference_points=ref_3d,
                     reference_points_cam=reference_points_cam,
                     bev_mask=bev_mask,
                     attn_mask=attn_masks[attn_index],

@@ -2,14 +2,13 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
-
 from __future__ import annotations
 
+import glob
 import sys
 sys.path.append('.')
 
 import argparse
-import copy
 import os
 from os import path as osp
 
@@ -17,7 +16,7 @@ import torch
 from mmengine.config import Config, DictAction
 from src.runner import Runner
 
-CONFIG_DIR = "configs"
+DEFAULT_CONFIG = "configs/bevformer_tiny_test.py"
 WORK_DIR = "experiment"
 
 
@@ -25,18 +24,19 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
     parser.add_argument(
         '--config',
-        help='train config file path',
-        default=f"{CONFIG_DIR}/bevformer_tiny_test.py")
+        help='config file path',
+        default=DEFAULT_CONFIG)
     parser.add_argument(
-        '--work-dir', help='the dir to save logs and models',
+        '--work-dir',
+        help='the dir to save logs and checkpoints',
         default=WORK_DIR)
     parser.add_argument(
         '--resume',
         action='store_true',
         help='Whether to resume training. Defaults to False. If '
              '``resume`` is True and ``load_from`` is None, automatically to'
-             'find latest checkpoint from ``work_dir``. If not found, resuming'
-             'does nothing.')
+             'find latest checkpoint from ``work_dir``. '
+             'If not found, resuming, try resume checkpoint from hub')
     parser.add_argument(
         '--load_from',
         default=None,
@@ -48,26 +48,17 @@ def parse_args():
         help='Train, test or predict. If mode is val, automatic resume the '
              'checkpoint from `load_from`, so provide it.')
     parser.add_argument(
-        '--no-validate',
-        action='store_true',
-        help='whether not to evaluate the checkpoint during training')
-    parser.add_argument(
         '--experiment-name',
-        default="train",
-        help="Experiment name")
+        default="baseline",
+        help="Experiment name, we use it as different configs"
+             "Such as v1-resnet-101, the corresponding repo and dir will be created.")
+    parser.add_argument(
+        '--repo-id',
+        default=None,
+        help="The repo to save checkpoints during training."
+             "If set organization or username(e.g. 'project', 'username'), the corresponding repo is 'project/experiment`."
+             "If set repo id (e.g. 'project/resnet'), the corresponding repo is 'project/resnet-experiment'.")
 
-    group_gpus = parser.add_mutually_exclusive_group()
-    group_gpus.add_argument(
-        '--gpus',
-        type=int,
-        help='number of gpus to use '
-             '(only applicable to non-distributed training)')
-    group_gpus.add_argument(
-        '--gpu-ids',
-        type=int,
-        nargs='+',
-        help='ids of gpus to use '
-             '(only applicable to non-distributed training)')
     parser.add_argument('--seed', type=int, default=321, help='random seed')
     parser.add_argument(
         '--deterministic',
@@ -94,6 +85,19 @@ def parse_args():
         action='store_true',
         help='automatically scale lr with the number of gpus')
 
+    group_gpus = parser.add_mutually_exclusive_group()
+    group_gpus.add_argument(
+        '--gpus',
+        type=int,
+        help='number of gpus to use '
+             '(only applicable to non-distributed training)')
+    group_gpus.add_argument(
+        '--gpu-ids',
+        type=int,
+        nargs='+',
+        help='ids of gpus to use '
+             '(only applicable to non-distributed training)')
+
     args = parser.parse_args()
 
     if 'LOCAL_RANK' not in os.environ:
@@ -105,9 +109,21 @@ def parse_args():
 def main():
     args = parse_args()
 
+    if not args.config:
+        try:
+            config_file = f"{args.work_dir}/{args.experiment_name}/*.py"
+            args.config = glob.glob(config_file, recursive=False)[0]
+        except IndexError:
+            args.config = DEFAULT_CONFIG
+
     cfg = Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+
+    if args.repo_id is not None:
+        for hook in cfg.custom_hooks:
+            if 'repo_id' in hook:
+                hook['repo_id'] = args.repo_id
 
     # import modules from string list.
     if cfg.get('custom_imports', None):
@@ -141,14 +157,6 @@ def main():
         cfg.optimizer['lr'] = cfg.optimizer['lr'] * len(cfg.gpu_ids) / 8
 
     # ========================================================================
-    val_dataset = copy.deepcopy(cfg.data.val)
-    # in case we use a dataset wrapper
-    if 'pipeline' not in val_dataset:
-        if 'dataset' in cfg.data.train:
-            val_dataset.pipeline = cfg.data.train.dataset.pipeline
-        else:
-            val_dataset.pipeline = cfg.data.train.pipeline
-
     cfg.resume = args.resume
     cfg.load_from = args.load_from
     cfg.experiment_name = args.experiment_name

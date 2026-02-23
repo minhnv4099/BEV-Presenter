@@ -1,4 +1,8 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+#
+#  Copyright (c) 2026
+#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
+#
+
 import os
 from typing import Optional
 

@@ -45,15 +45,10 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
             `LN`.
     """
 
-    def __init__(self, *args, return_intermediate: bool = False, **kwargs):
-        self.completed = True
-        try:
-            super(DetectionTransformerDecoder, self).__init__(*args, **kwargs)
-            self.return_intermediate = return_intermediate
-            self.fp16_enabled = False
-        except Exception as e:
-            raise e
-            self.completed = False
+    def __init__(self, *args, return_intermediate: bool = True, **kwargs):
+        super(DetectionTransformerDecoder, self).__init__(*args, **kwargs)
+        self.return_intermediate = return_intermediate
+        self.fp16_enabled = False
 
     def forward(
         self,
@@ -77,8 +72,10 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
         Args:
             query (Tensor): Input query with shape
                 `(num_query, bs, embed_dims)`.
+            value (Tensor):
+                BEV features with shape `(bs, n_bev_query, embed_dims)`.
             reference_points (Tensor): The reference
-                points of offset. has shape
+                points sigmoid of offset. has shape
                 (bs, num_query, 4) when as_two_stage,
                 otherwise has shape (bs, num_query, 2).
             reg_branches: (obj:`nn.ModuleList`): Used for
@@ -88,12 +85,15 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
             key_padding_mask (Tensor): ByteTensor for `query`, with
                 shape [bs, num_keys]. Default: None.
         Returns:
-            Tensor: Results with shape [1, num_query, bs, embed_dims] when
-                return_intermediate is `False`, otherwise it has shape
-                [num_layers, num_query, bs, embed_dims].
+            tuple[Tensor]: Tuple of 2 tensor:
+
+                - When ``self.return_intermediate`` is False:
+                    `[num_query, bs, embed_dims]` and `(bs, num_query, 2)`.
+                - When ``self.return_intermediate`` is True:
+                    `[n_dec_layer, num_query, bs, embed_dims]` and `(n_dec_layer, bs, num_query, 2)`.
         """
         output = query
-        intermediate: list[Tensor] = []
+        intermediate_hidden_states: list[Tensor] = []
         intermediate_reference_points: list[Tensor] = []
         for lid, layer in enumerate(self.layers):
             # (bs, num_query, num_level, 2)
@@ -116,6 +116,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
             output = output.permute(1, 0, 2)
 
             if reg_branches is not None:
+                # like offset w.r.t. reference point
                 tmp = reg_branches[lid](output)
 
                 assert reference_points.shape[-1] == 3
@@ -134,12 +135,12 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
             output = output.permute(1, 0, 2)
 
             if self.return_intermediate:
-                intermediate.append(output)
+                intermediate_hidden_states.append(output)
                 intermediate_reference_points.append(reference_points)
 
         if self.return_intermediate:
-            return torch.stack(intermediate), torch.stack(
-                intermediate_reference_points)
+            return (torch.stack(intermediate_hidden_states),
+                    torch.stack(intermediate_reference_points))
 
         return output, reference_points
 
@@ -209,6 +210,7 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                 self_attn_mask: Optional[Tensor] = None,
                 cross_attn_mask: Optional[Tensor] = None,
                 key_padding_mask: Optional[Tensor] = None,
+                spatial_shapes: Optional[Tensor] = None,
                 **kwargs) -> Tensor:
         """
         Args:
@@ -265,7 +267,7 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                     query,
                     identity if self.pre_norm else None,
                     query_pos=query_pos,
-                    key_pos=key_pos,
+                    key_pos=query_pos,
                     attn_mask=attn_masks[attn_index])
                 attn_index += 1
                 identity = query
@@ -284,6 +286,7 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                     reference_points=reference_points,
                     attn_mask=attn_masks[attn_index],
                     key_padding_mask=key_padding_mask,
+                    spatial_shapes=spatial_shapes,
                     # level_start_index=level_start_index,
                     **kwargs)
                 attn_index += 1

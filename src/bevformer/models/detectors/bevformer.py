@@ -14,7 +14,6 @@ from src.bevformer.models.utils.grid_mask import GridMask
 from src.bevformer.models.utils.bbox import bbox3d2result
 from src.utils.logging import getLogger
 from src.utils.fp16_utils import auto_fp16
-from src.utils.list_utils import construct_list
 from .mvx_two_stage import MVXTwoStageDetector
 
 if TYPE_CHECKING:
@@ -130,19 +129,19 @@ class BEVFormerDetector(MVXTwoStageDetector):
         Args:
             img (torch.Tensor): Images of each sample with shape
                 `(bs, n_queue, num_cam, C, H, W)`.
-                The last `n_queue - 1` is previous images.
+                The last `n_queue - 1` are previous frames.
             img_metas (list[dict], optional): Meta information of each sample.
-                Length of `bs`, each of `n_queue`.
+                List of `bs` dict of `n_queue`.
             points (list[torch.Tensor], optional): Points of each sample.
                 Length of `bs`. Defaults to None.
             gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`], optional):
-                Ground truth 3D boxes. Defaults to None.
+                Ground truth 3D boxes. List of 'bs'. Defaults to None.
             gt_labels_3d (list[torch.Tensor], optional): Ground truth labels
-                of 3D boxes. Defaults to None.
-            gt_labels (list[torch.Tensor], optional): Ground truth labels
-                of 2D boxes in images. Defaults to None.
+                of 3D boxes. List if 'bs'. Defaults to None.
             gt_bboxes (list[torch.Tensor], optional): Ground truth 2D boxes in
-                images. Defaults to None.
+                images. List if 'bs'. Defaults to None.
+            gt_labels (list[torch.Tensor], optional): Ground truth labels
+                of 2D boxes in images. List if 'bs'. Defaults to None.
             proposals (list[torch.Tensor], optional): Predicted proposals
                 used for training Fast RCNN. Defaults to None.
             gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
@@ -151,15 +150,13 @@ class BEVFormerDetector(MVXTwoStageDetector):
             dict: Losses of different branches.
         """
         len_queue = img.size(1)
-        # shape (bs, n_queue-1, n_cam, C, H, W)
         prev_img = img[:, :-1, ...]
-        # (bs, n_cam, C, H, W)
         curr_img = img[:, -1, ...]
 
         prev_img_metas = copy.deepcopy(img_metas)
         prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
 
-        # get last meta in queue
+        # last meta, i.e. img meta for current timestamp
         img_metas = [each[len_queue - 1] for each in img_metas]
         if not img_metas[0]['prev_bev_exists']:
             prev_bev = None
@@ -173,7 +170,6 @@ class BEVFormerDetector(MVXTwoStageDetector):
             img_metas=img_metas,
             gt_bboxes_3d=gt_bboxes_3d,
             gt_labels_3d=gt_labels_3d,
-            gt_bboxes_ignore=gt_bboxes_ignore,
             prev_bev=prev_bev
         )
 
@@ -184,7 +180,8 @@ class BEVFormerDetector(MVXTwoStageDetector):
         """Obtain history BEV features iteratively. To save GPU memory, gradients are not calculated.
         Args:
             imgs_queue (torch.Tensor):
-                Queue of previous images. Shape of `(bs, n_queue - 1, n_cam, C, H, W)`.
+                Queue of previous images.
+                Shape of `(bs, n_queue - 1, n_cam, C, H, W)`.
             img_metas_list (list[dict]):
                 List of metadata of images in queue. Length of 'bs', each has length of `n_queue`.
         """
@@ -194,7 +191,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
             bs, len_queue, num_cams, C, H, W = imgs_queue.shape
             imgs_queue = imgs_queue.reshape(bs * len_queue, num_cams, C, H, W)
             # list of `n_levels` of `(bs, len_queue, n_cam, C, H, W)`
-            img_feats_list = self.extract_feat(
+            img_feats_list = self.extract_img_feat(
                 pixel_values=imgs_queue,
                 len_queue=len_queue,
                 img_metas=img_metas_list)
@@ -249,7 +246,10 @@ class BEVFormerDetector(MVXTwoStageDetector):
             len_queue (`int`, *optional* default to ``None``): Queue length.
                 Indicate by the first dimension (i.e. bs).
         Returns:
-            Tuple of tensor with shape `[..., len_queue, n_ca m, c, h, w]`.
+            tuple[Tensor]: Tuple of `n_levels` tensor with shape:
+
+                - `[bs, len_queue, n_cam, c, h, w]` if ``len_queue`` is provided.
+                - `[bs, n_cam, c, h, w]` if ``len_queue`` is `None`.
         """
         B = pixel_values.size(0)
         input_shape = pixel_values.shape[-2:]
@@ -263,7 +263,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
         elif pixel_values.dim() == 5 and B > 1:
             B, N, C, H, W = pixel_values.size()
             pixel_values = pixel_values.reshape(B * N, C, H, W)
-        # TODO: inspect grid_mask
+
         if self.use_grid_mask:
             pixel_values = self.grid_mask(pixel_values)
 
@@ -276,7 +276,6 @@ class BEVFormerDetector(MVXTwoStageDetector):
         for feature_map in feature_maps:
             BN, C, H, W = feature_map.size()
             if len_queue is not None:
-                # return when getting history bev
                 img_feats_reshaped.append(feature_map.view(int(B / len_queue), len_queue, int(BN / B), C, H, W))
             else:
                 img_feats_reshaped.append(feature_map.view(B, int(BN / B), C, H, W))
@@ -328,6 +327,16 @@ class BEVFormerDetector(MVXTwoStageDetector):
         img_metas: list[list[dict]],
         **kwargs
     ):
+        """Forward testing
+
+        Args:
+            img (list[Tensor]):
+                List of `n_aug` tensor with shape of `(bs, n_cam, c, h, w)`.
+                Only use current timestamp, not queue of frames.
+            img_metas (list[list[dict]]):
+                List of `n_aug` lists of `bs`.
+
+        """
         if not isinstance(img_metas, list):
             raise TypeError(f"'img_metas' must be a list, but got {type(img_metas)}")
         if not isinstance(img, list):
@@ -353,6 +362,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
             img_metas[0][0]['can_bus'][-1] = 0
             img_metas[0][0]['can_bus'][:3] = 0
 
+        # test on only first augmentation
         new_prev_bev, bbox_results = self.simple_test(
             img[0], img_metas[0], prev_bev=self.prev_frame_info['prev_bev'], **kwargs)
         # During inference, we save the BEV features and ego motion of each timestamp.
@@ -362,13 +372,21 @@ class BEVFormerDetector(MVXTwoStageDetector):
 
         return bbox_results
 
-    def simple_test(self, pixel_values: torch.FloatTensor, img_metas: list[dict], prev_bev=None, rescale=False):
+    def simple_test(
+        self,
+        pixel_values: torch.FloatTensor,
+        img_metas: list[dict],
+        prev_bev: Optional[torch.Tensor],
+        rescale: bool = False
+    ):
         """Simple test function without augmentation predict results of bev embeddings and bounding boxes.
 
           Args:
               pixel_values (`torch.FloatTensor`):
                   Feature maps for testing images.
+                  Shape `(bs, n_cam, c, h, w)`.
               img_metas (`list[dict]'): Metadata of images.
+                List of `bs`.
               prev_bev: Previous BEV embeddings at timestamp t-1.
               rescale (`bool`): Whether to rescale.
 
@@ -376,14 +394,17 @@ class BEVFormerDetector(MVXTwoStageDetector):
               2-element tuple: BEV embeddings and predicted bboxes.
           """
         img_feats = self.extract_feat(pixel_values=pixel_values, img_metas=img_metas)
-        new_prev_bev, bbox_pts = self.simple_test_pts(
-            feature_maps=img_feats,
-            img_metas=img_metas,
-            prev_bev=prev_bev,
-            rescale=rescale
-        )
 
-        return new_prev_bev, bbox_pts
+        outs = self.pts_bbox_head(img_feats, img_metas, prev_bev=prev_bev)
+
+        bbox_list = self.pts_bbox_head.get_bboxes(
+            outs, img_metas, rescale=rescale)
+        bbox_results = [
+            bbox3d2result(bboxes, scores, labels)
+            for bboxes, scores, labels in bbox_list
+        ]
+
+        return outs['bev_embed'], bbox_results
 
     def simple_test_pts(
         self,

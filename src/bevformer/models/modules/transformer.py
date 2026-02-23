@@ -50,9 +50,7 @@ class PerceptionTransformer(BaseModule):
         rotate_center: list[int] = [100, 100],
         **kwargs
     ):
-        super(PerceptionTransformer, self).__init__(**kwargs)
-        self.encoder = None
-        self.decoder = None
+        super(PerceptionTransformer, self).__init__(init_cfg=kwargs.get('init_cfg', None))
         self.encoder = build_transformer_block(encoder)
         self.decoder = build_transformer_block(decoder)
 
@@ -73,11 +71,13 @@ class PerceptionTransformer(BaseModule):
 
     def init_layers(self):
         """Initialize layers of the Detr3DTransformer."""
-        self.level_embeds = nn.Parameter(torch.Tensor(
-            self.num_feature_levels, self.embed_dims))
-        self.cams_embeds = nn.Parameter(
-            torch.Tensor(self.num_cams, self.embed_dims))
+        self.level_embeds = nn.Parameter(torch.Tensor(self.num_feature_levels, self.embed_dims))
+        self.cams_embeds = nn.Parameter(torch.Tensor(self.num_cams, self.embed_dims))
+        # normally, reference point for object queries is 2d,
+        # but by treating point as initial guess for bbox center, the 3rd dimension is Z-axis
+        # only used 1st and 2nd dim as reference point
         self.reference_points = nn.Linear(self.embed_dims, 3)
+        """Reference point projector for object query"""
         self.can_bus_mlp = nn.Sequential(
             nn.Linear(18, self.embed_dims // 2),
             nn.ReLU(inplace=True),
@@ -104,7 +104,7 @@ class PerceptionTransformer(BaseModule):
         xavier_init(self.reference_points, distribution='uniform', bias=0.)
         xavier_init(self.can_bus_mlp, distribution='uniform', bias=0.)
 
-    @auto_fp16(apply_to=('mlvl_feats', 'bev_queries', 'object_query_embed', 'prev_bev', 'bev_pos'))
+    @auto_fp16(apply_to=('mlvl_feats', 'bev_queries', 'object_queries', 'prev_bev', 'bev_pos'))
     def forward(
         self,
         mlvl_feats: list[Tensor],
@@ -121,17 +121,19 @@ class PerceptionTransformer(BaseModule):
     ):
         """Forward function for `Detr3DTransformer`.
         Args:
-            mlvl_feats (list(Tensor)): Input queries from
+            mlvl_feats (list(Tensor)): List of feature maps from
                 different levels. Each element has shape
-                [bs, num_cams, embed_dims, h, w].
-            bev_queries (Tensor): (bev_h*bev_w, c)
+                `[bs, num_cams, embed_dims, h, w]`.
+            bev_queries (Tensor): Bev queries. Shape of `(bev_h*bev_w, c)`.
+                Expand to `bs`.
             bev_h (int): Height of BEV plane.
             bev_w (int): Width of BEV plane.
             grid_length (list): Grid length.
-            prev_bev (int): Previous BEV embed.
-            bev_pos (Tensor): (bs, embed_dims, bev_h, bev_w)
-            object_queries (Tensor): The query embedding for decoder,
-                with shape `[num_query, c]`. It's different from bev query.
+            prev_bev (int): Previous BEV embed shape `(bs, bev_h*bev_w, c)`.
+            bev_pos (Tensor): Position encoding for BEV.
+                Shape of `(bs, embed_dims, bev_h, bev_w)`.
+            object_queries (Tensor): Object queries for decoder,
+                with shape `[num_query, embed_dims*2]`.
             reg_branches (obj:`nn.ModuleList`): Regression heads for
                 feature maps from each decoder layer. Only would
                 be passed when `with_box_refine` is True. Default to None.
@@ -139,7 +141,7 @@ class PerceptionTransformer(BaseModule):
                 feature maps from each decoder layer.
         Returns:
             tuple[Tensor]: Results of decoder containing the following tensor.
-                - bev_embed: BEV features
+                - bev_embed: BEV features shape `(bev_h*bev_w, bs, c)`.
                 - inter_states: Outputs from decoder. If
                     return_intermediate_dec is True output has shape \
                       (num_dec_layers, bs, num_query, embed_dims), else has \
@@ -148,7 +150,7 @@ class PerceptionTransformer(BaseModule):
                     points, has shape (bs, num_queries, 4).
                 - inter_references_out: The internal value of reference \
                     points in decoder, has shape \
-                    (num_dec_layers, bs,num_query, embed_dims)
+                    (num_dec_layers, bs, num_query, embed_dims)
                 - enc_outputs_class: The classification score of \
                     proposals generated from \
                     encoder's feature maps, has shape \
@@ -161,7 +163,7 @@ class PerceptionTransformer(BaseModule):
                     be returned when `as_two_stage` is True, \
                     otherwise None.
         """
-        # bev_embed shape: (bev_h*bev_w, bs, embed_dims)
+        # bev_embed shape: (bs, bev_h*bev_w, embed_dims)
         bev_embed = self.get_bev_features(
             mlvl_feats,
             bev_queries,
@@ -172,7 +174,7 @@ class PerceptionTransformer(BaseModule):
             prev_bev=prev_bev,
             **kwargs)
 
-        # shape of (bs, bev_h * bev_w, embed_dims)
+        # (bev_h*bev_w, bs, embed_dims)
         bev_embed = bev_embed.permute(1, 0, 2)
 
         bs = mlvl_feats[0].size(0)
@@ -231,7 +233,7 @@ class PerceptionTransformer(BaseModule):
                 `[height_cell, width_cell]`. Used to compute shift.
             bev_pos (Tensor): Position encoding for BEV.
                 Shape of `(bs, embed_dims, bev_h, bev_w)`.
-            prev_bev (Tensor): Previous bev feats.
+            prev_bev (Tensor): Previous bev feats shape of `(bs, n_bev_query, embed_dims)`.
             **kwargs: Dictionary with some keys
         """
         bs = mlvl_feats[0].size(0)
@@ -279,7 +281,7 @@ class PerceptionTransformer(BaseModule):
         can_bus = self.can_bus_mlp(can_bus)[None, :, :]
         bev_queries = bev_queries + can_bus * self.use_can_bus
 
-        # (num_levels, num_cam, bs, h*w, embed_dims))
+        # list of `num_levels` tensor `(num_cam, bs, h*w, embed_dims)`
         feat_flatten = []
         # (num_levels, 2)
         spatial_shapes = []
@@ -302,6 +304,7 @@ class PerceptionTransformer(BaseModule):
         # (num_cam, n_level*h'*w', bs, embed_dims)
         feat_flatten = torch.cat(feat_flatten, 2)
         feat_flatten = feat_flatten.permute(0, 2, 1, 3)
+        # (num_levels, 2)
         spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=bev_pos.device)
         # (num_levels, )
         level_start_index = torch.cat((spatial_shapes.new_zeros(

@@ -1,4 +1,4 @@
-from mmengine.hooks import Hook
+from src.hooks import Hook
 from src.registry import HOOKS
 
 

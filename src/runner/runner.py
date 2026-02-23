@@ -27,9 +27,9 @@ from mmengine.dataset import worker_init_fn as default_worker_init_fn
 from mmengine.dist import (broadcast, get_dist_info, get_rank, init_dist,
                            is_distributed, master_only)
 from mmengine.evaluator import Evaluator
+from mmengine.logging import MessageHub
 from mmengine.fileio import FileClient, join_path
 from mmengine.hooks import Hook
-from mmengine.logging import MessageHub, MMLogger, print_log
 from mmengine.model import (MMDistributedDataParallel, convert_sync_batchnorm,
                             is_model_wrapper, revert_sync_batchnorm)
 from mmengine.model.efficient_conv_bn_eval import turn_on_efficient_conv_bn_eval
@@ -59,6 +59,7 @@ from src.registry import (DATASETS, MODELS, RUNNERS, FUNCTIONS,
                           MODEL_WRAPPERS)
 from src.utils.logging import getLogger
 from src.device import get_device
+from src.utils.logging import MMLogger, print_log
 from .priority import Priority, get_priority
 from .base_loop import BaseLoop
 from .loops import EpochBasedTrainLoop, IterBasedTrainLoop, TestLoop, ValLoop
@@ -287,7 +288,7 @@ class Runner:
         use_new_lr: bool = False,
         cfg: Optional[ConfigType] = None,
     ):
-        self._work_dir = osp.abspath(work_dir)
+        self._work_dir = work_dir
         mmengine.mkdir_or_exist(self._work_dir)
 
         # recursively copy the `cfg` because `self.cfg` will be modified
@@ -303,14 +304,7 @@ class Runner:
         # lazy initialization
         training_related = [train_dataloader, train_cfg, optim_wrapper]
         self.enough_to_train = all(item is not None for item in training_related)
-
         if not self.enough_to_train:
-            # self.logger.warning(
-            #     'train_dataloader, train_cfg, and optim_wrapper should be '
-            #     'either all None or not None, but got '
-            #     f'train_dataloader={train_dataloader}, '
-            #     f'train_cfg={train_cfg}, '
-            #     f'optim_wrapper={optim_wrapper}.')
             logger.warning(
                 f"It's not enough to train because got \n"
                 f"\ttrain_dataloader={train_dataloader} \n"
@@ -318,7 +312,6 @@ class Runner:
                 f'\toptim_wrapper={optim_wrapper}.')
         self._train_dataloader = train_dataloader
         self._train_loop = train_cfg
-        self.optim_wrapper: Optional[Union[OptimWrapper, dict]]
         self.optim_wrapper = optim_wrapper
         self.auto_scale_lr = auto_scale_lr
         self.use_new_lr = use_new_lr
@@ -360,12 +353,7 @@ class Runner:
                 f'\ttest_cfg={test_cfg}\n'
                 f'\ttest_dataloader={test_dataloader}.'
             )
-            # raise ValueError(
-            #     'test_dataloader, test_cfg, and test_evaluator should be '
-            #     'either all None or not None, but got '
-            #     f'test_dataloader={test_dataloader}, '
-            #     f'test_cfg={test_cfg}, '
-            #     f'test_evaluator={test_evaluator}')
+
         self._test_dataloader = test_dataloader
         self._test_loop = test_cfg
         self._test_evaluator = test_evaluator
@@ -386,14 +374,16 @@ class Runner:
         self.set_randomness(**randomness)
 
         if experiment_name is not None:
-            self._experiment_name = f'{experiment_name}_{self._timestamp}'
+            self._experiment_name = experiment_name
         elif self.cfg.filename is not None:
             filename_no_ext = osp.splitext(osp.basename(self.cfg.filename))[0]
-            self._experiment_name = f'{filename_no_ext}_{self._timestamp}'
+            self._experiment_name = filename_no_ext
         else:
             self._experiment_name = self.timestamp
 
-        self._log_dir = osp.join(self.work_dir, self.experiment_name)
+        self._experiment_dir = osp.join(self._work_dir, self.experiment_name)
+        self._log_dir = osp.join(self._experiment_dir, self.timestamp)
+
         mmengine.mkdir_or_exist(self._log_dir)
         # Used to reset registries location. See :meth:`Registry.build` for more details.
         if default_scope is not None:
@@ -429,8 +419,8 @@ class Runner:
             self.visualizer.add_config(self.cfg)
 
         # flag to mark whether checkpoint has been loaded or resumed
-        self._load_from = load_from
         self._resume = resume
+        self._load_from = load_from
         self._has_loaded = False
 
         # build a model
@@ -466,7 +456,8 @@ class Runner:
             filename = f'{self.timestamp}.py'
 
         if self.cfg._cfg_dict:
-            save_cfg_file = osp.join(self._log_dir, filename)
+            save_cfg_file = osp.join(self.experiment_dir, filename)
+            self.save_cfg_file = save_cfg_file
             self.cfg.dump(save_cfg_file)
             self.logger.info(f"See full config in {save_cfg_file!r}.")
 
@@ -528,7 +519,11 @@ class Runner:
     @property
     def work_dir(self):
         """str: The working directory to save checkpoints and logs."""
-        return self._work_dir
+        return self._experiment_dir
+
+    @property
+    def experiment_dir(self):
+        return self._experiment_dir
 
     @property
     def log_dir(self):
@@ -664,10 +659,18 @@ class Runner:
         return self.train_loop.val_interval
 
     @property
-    def val_begin(self):
+    def val_begin(self) -> int:
         """int: The epoch/iteration to start running validation during
         training."""
         return self.train_loop.val_begin
+
+    @property
+    def has_loaded(self):
+        return self._has_loaded
+
+    @property
+    def need_resume(self):
+        return self._resume
 
     def setup_env(self, env_cfg: Dict) -> None:
         """Setup environment.
@@ -743,7 +746,6 @@ class Runner:
             deterministic=deterministic,
             diff_rank_seed=diff_rank_seed)
 
-
     def _log_env(self, env_cfg: dict) -> None:
         """Logging environment information of the current task.
 
@@ -791,10 +793,11 @@ class Runner:
             MMLogger: A MMLogger object build from ``logger``.
         """
         if log_file is None:
-            log_file = osp.join(self._log_dir, f'{self.timestamp}.log')
+            log_file = osp.join(self._log_dir, 'logs.log')
 
         log_cfg = dict(log_level=log_level, log_file=log_file, **kwargs)
-        log_cfg.setdefault('name', self._experiment_name)
+        log_cfg.setdefault('name', self.experiment_name)
+        # log_cfg.setdefault('logger_name', self.experiment_name)
         # `torch.compile` in PyTorch 2.0 could close all user defined handlers
         # unexpectedly. Using file mode 'a' can help prevent abnormal
         # termination of the FileHandler and ensure that the log file could
@@ -853,10 +856,10 @@ class Runner:
             MessageHub: A MessageHub object build from ``message_hub``.
         """
         if message_hub is None:
-            message_hub = dict(name=self._experiment_name)
+            message_hub = dict(name=self.experiment_name)
         elif isinstance(message_hub, dict):
             # ensure message_hub containing name key
-            message_hub.setdefault('name', self._experiment_name)
+            message_hub.setdefault('name', self.experiment_name)
         else:
             raise TypeError(
                 f'message_hub should be dict or None, but got {message_hub}')
@@ -864,8 +867,8 @@ class Runner:
         return MessageHub.get_instance(**message_hub)
 
     def build_visualizer(
-            self,
-            visualizer: Optional[Union[Visualizer, Dict]] = None
+        self,
+        visualizer: Optional[Union[Visualizer, Dict]] = None
     ) -> Visualizer:
         """Build a global accessible Visualizer.
 
@@ -923,7 +926,7 @@ class Runner:
         Returns:
             nn.Module: Model build from ``model``.
         """
-        logger.info("Building model")
+        self.logger.info("Building model")
 
         if isinstance(model, nn.Module):
             return model
@@ -935,8 +938,8 @@ class Runner:
                             f'but got {model}')
 
     def wrap_model(
-            self, model_wrapper_cfg: Optional[Dict],
-            model: nn.Module) -> Union[DistributedDataParallel, nn.Module]:
+        self, model_wrapper_cfg: Optional[Dict],
+        model: nn.Module) -> Union[DistributedDataParallel, nn.Module]:
         """Wrap the model to :obj:`MMDistributedDataParallel` or other custom
         distributed data-parallel module wrappers.
 
@@ -957,7 +960,7 @@ class Runner:
             nn.Module or DistributedDataParallel: nn.Module or subclass of
             ``DistributedDataParallel``.
         """
-        logger.info("Wrapping model")
+        self.logger.info("Wrapping model")
         if is_model_wrapper(model):
             if model_wrapper_cfg is not None:
                 raise TypeError(
@@ -1010,9 +1013,9 @@ class Runner:
     def _init_model_weights(self) -> None:
         """Initialize the model weights if the model has
         :meth:`init_weights`"""
-        logger.info("Initializing weights")
         model = self.model.module if is_model_wrapper(self.model) else self.model
         if hasattr(model, 'init_weights'):
+            logger.info("Initializing weights")
             model.init_weights()
             # sync params and buffers
             for name, params in model.state_dict().items():
@@ -1469,7 +1472,7 @@ class Runner:
         else:
             # fallback to raise error in dataloader
             # if `dataset_cfg` is not a valid type
-            dataset = dataset_cfg
+            raise ValueError("Invalid dataset config")
 
         # build sampler
         sampler_cfg = dataloader_cfg.pop('sampler')
@@ -1725,19 +1728,16 @@ class Runner:
                 'If you want to validate your model, please make sure your '
                 'model has implemented `val_step`.')
 
-        # if self._train_loop is None:
-        #     raise RuntimeError(
-        #         '`self._train_loop` should not be None when calling train '
-        #         'method. Please provide `train_dataloader`, `train_cfg`, '
-        #         '`optimizer` and `param_scheduler` arguments when '
-        #         'initializing runner.')
-
         if not self.enough_to_train:
             raise RuntimeError(
                 f"It's not enough to train because got \n"
                 f"\ttrain_dataloader={self._train_dataloader} \n"
                 f'\ttrain_cfg={self._train_loop} \n'
-                f'\toptim_wrapper={self.optim_wrapper}.')
+                f'\toptim_wrapper={self.optim_wrapper}.\n'
+                'Please provide `train_dataloader`, `train_cfg`, '
+                '`optimizer` and `param_scheduler` arguments when '
+                'initializing runner.'
+            )
 
         self._train_loop = self.build_train_loop(self._train_loop)  # type: ignore
 
@@ -1753,7 +1753,6 @@ class Runner:
         if self.enough_to_val:
             self._val_loop = self.build_val_loop(self._val_loop)  # type: ignore
 
-        # TODO: add a contextmanager to avoid calling `before_run` many times
         self.call_hook('before_run')
 
         # initialize the model weights
@@ -1778,8 +1777,13 @@ class Runner:
         # Maybe compile the model according to options in self.cfg.compile
         # This must be called **AFTER** model has been wrapped.
         self._maybe_compile('train_step')
+        model = None
+        try:
+            model = self.train_loop.run()  # type: ignore
+        except KeyboardInterrupt as e:
+            logger.error("Catch error. So treat it as 'after_train'.")
+            # self.call_hook('after_train')
 
-        model = self.train_loop.run()  # type: ignore
         self.call_hook('after_run')
         return model
 
@@ -1794,19 +1798,14 @@ class Runner:
                 f"It's not enough to val because got \n"
                 f"\tval_dataloader={self._val_dataloader} \n"
                 f'\tval_cfg={self._val_loop}\n'
-                f'\tval_evaluator={self.val_evaluator}.'
-            )
-
-        if self._val_loop is None:
-            raise RuntimeError(
-                '`self._val_loop` should not be None when calling val method.'
+                f'\tval_evaluator={self._val_evaluator}.\n'
                 'Please provide `val_dataloader`, `val_cfg` and '
-                '`val_evaluator` arguments when initializing runner.')
+                '`val_evaluator` arguments when initializing runner.'
+            )
 
         self._val_loop = self.build_val_loop(self._val_loop)  # type: ignore
 
         self.call_hook('before_run')
-
         # make sure checkpoint-related hooks are triggered after `before_run`
         self.load_or_resume()
 
@@ -1825,18 +1824,14 @@ class Runner:
                 f"It's not enough to test because got \n"
                 f"\ttest_evaluator={self._test_dataloader}\n"
                 f'\ttest_cfg={self._test_loop}\n'
-                f'\ttest_dataloader={self._test_dataloader}.'
+                f'\ttest_dataloader={self._test_dataloader}.\n'
+                ' Please provide `test_dataloader`, `test_cfg` and '
+                '`test_evaluator` arguments when initializing runner.'
             )
-        if self._test_loop is None:
-            raise RuntimeError(
-                '`self._test_loop` should not be None when calling test '
-                'method. Please provide `test_dataloader`, `test_cfg` and '
-                '`test_evaluator` arguments when initializing runner.')
 
         self._test_loop = self.build_test_loop(self._test_loop)  # type: ignore
 
         self.call_hook('before_run')
-
         # make sure checkpoint-related hooks are triggered after `before_run`
         self.load_or_resume()
 
@@ -1846,34 +1841,34 @@ class Runner:
 
     def load_or_resume(self) -> None:
         """load or resume checkpoint."""
-        self.logger.info("Load or resume")
         if self._has_loaded:
             return None
 
         # decide to load from checkpoint or resume from checkpoint
         resume_from = None
-        if self._resume:
+        if self.need_resume:
+            self.logger.info("Load or resume")
             if self._load_from is None:
-                # auto resume from the latest checkpoint
-                resume_from = find_latest_checkpoint(self.work_dir)
+                # auto resume from the latest checkpoint from local
+                resume_from = find_latest_checkpoint(self.experiment_dir)
                 self.logger.info(f'Auto resumed from the latest checkpoint {resume_from!r}.')
             else:
                 # resume from the specified checkpoint
                 resume_from = self._load_from
 
         if resume_from is not None:
-            self.resume(resume_from, resume_optimizer=not self.use_new_lr)
-            self._has_loaded = True
+            self.resume(resume_from)
         elif self._load_from is not None:
             self.load_checkpoint(self._load_from)
-            self._has_loaded = True
 
     def resume(self,
-               filename: str,
+               filename: Optional[str] = None,
                resume_optimizer: bool = True,
                resume_param_scheduler: bool = True,
-               map_location: Union[str, Callable] = 'default') -> None:
+               map_location: Union[str, Callable] = 'default'
+               ) -> None:
         """Resume model from checkpoint.
+        Load from local first. If not exist, use ``given_checkpoint`` then.
 
         Args:
             filename (str): Accept local filepath, URL, ``torchvision://xxx``,
@@ -1892,6 +1887,11 @@ class Runner:
         else:
             checkpoint = self.load_checkpoint(filename, map_location=map_location)
 
+        if checkpoint is None:
+            return ...
+
+        logger.info(f"Resume checkpoint from {filename!r}.")
+
         self.train_loop._epoch = checkpoint['meta']['epoch']
         self.train_loop._iter = checkpoint['meta']['iter']
 
@@ -1903,7 +1903,7 @@ class Runner:
             previous_gpu_ids = config.get('gpu_ids', None)
             if (previous_gpu_ids is not None and len(previous_gpu_ids) > 0
                     and len(previous_gpu_ids) != self._world_size):
-                # TODO, should we modify the iteration?
+                # TODO: should we modify the iteration?
                 if (self.auto_scale_lr is None
                         or not self.auto_scale_lr.get('enable', False)):
                     raise RuntimeError(
@@ -2003,8 +2003,11 @@ class Runner:
         except EOFError:
             self.logger.error("It's seem the checkpoint is empty.")
             raise EOFError
+        except FileNotFoundError:
+            self.logger.error(f"{filename!r} is not in local.")
+            return None
 
-        # Add comments to describe the usage of `after_load_ckpt`
+        # # Add comments to describe the usage of `after_load_ckpt`
         self.call_hook('after_load_checkpoint', checkpoint=checkpoint)
 
         if is_model_wrapper(self.model):
@@ -2017,7 +2020,7 @@ class Runner:
 
         self._has_loaded = True
 
-        self.logger.info(f'Load checkpoint from {filename}')
+        self.logger.info(f'Load checkpoint from {filename!r}')
 
         return checkpoint
 

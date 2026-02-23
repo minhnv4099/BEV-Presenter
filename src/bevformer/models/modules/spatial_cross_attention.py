@@ -92,7 +92,7 @@ class SpatialCrossAttention(BaseModule):
         Args:
             query (Tensor):
                 The input query with shape [num_queries, bs, embed_dims]
-                if self.batch_first is False, else `[bs, num_queries embed_dims]`.
+                if self.batch_first is False, else `[bs, num_queries, embed_dims]`.
             key (Tensor):
                 Input multi-camera features with shape `(num_cam, num_value, bs, embed_dims)`.
             value (Tensor):
@@ -128,11 +128,10 @@ class SpatialCrossAttention(BaseModule):
         """
         if residual is None:
             residual = query
-            slots = torch.zeros_like(query)
         if query_pos is not None:
             query = query + query_pos
-        if key_pos is not None:
-            pass
+
+        slots = torch.zeros_like(query)
 
         bs, num_query, _ = query.size()
         D = reference_points_cam.size(3)
@@ -153,21 +152,19 @@ class SpatialCrossAttention(BaseModule):
                 queries_rebatch[j, i, :len(index_query_per_img)] = query[j, index_query_per_img]
                 reference_points_rebatch[j, i, :len(index_query_per_img)] = reference_points_per_img[j, index_query_per_img]
 
-        num_cams, l, bs, embed_dims = key.shape
+        num_cams, l, bs, embed_dims = value.shape
 
         # (bs, num_cam, num_value, embed_dims)
         # (bs*num_cam, num_value, embed_dims)
-        key = key.permute(2, 0, 1, 3).reshape(
-            bs * self.num_cams, l, self.embed_dims)
+        # key = key.permute(2, 0, 1, 3).reshape(bs * self.num_cams, l, self.embed_dims)
         # (bs, num_cam, num_value, embed_dims)
         # (bs*num_cam, num_value, embed_dims) # NOTE: (bs*n_levels*n_cam, num_value, embed_dims)
-        value = value.permute(2, 0, 1, 3).reshape(
-            bs * self.num_cams, l, self.embed_dims)
-
+        value = value.permute(2, 0, 1, 3).reshape(bs * self.num_cams, l, self.embed_dims)
         input_query = queries_rebatch.view(bs * self.num_cams, max_len, self.embed_dims)
+
+        # (bs*num_cam, max_len, embed_dims)
         queries = self.deformable_attention(
             input_query,
-            key=key,
             value=value,
             reference_points=reference_points_rebatch.view(bs * self.num_cams, max_len, D, 2),
             spatial_shapes=spatial_shapes,
@@ -283,7 +280,7 @@ class MSDeformableAttention3D(BaseModule):
         xavier_init(self.output_proj, distribution='uniform', bias=0.)
         self._is_init = True
 
-    # @timing("MSDeformableAttention3D")
+    @timing("MSDeformableAttention3D")
     def forward(
         self,
         query: torch.Tensor,
@@ -329,12 +326,8 @@ class MSDeformableAttention3D(BaseModule):
                 A tensor has shape ``(num_levels,)`` and can be represented
                 as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
         Returns:
-             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+             Tensor: forwarded results with shape `[num_query, bs, embed_dims]`.
         """
-        if value is None:
-            value = query
-        if identity is None:
-            identity = query
         if query_pos is not None:
             query = query + query_pos
 
@@ -357,18 +350,14 @@ class MSDeformableAttention3D(BaseModule):
 
         attention_weights = self.attention_weights(query).view(
             bs, num_query, self.num_heads, self.num_levels * self.num_points)
-
         attention_weights = attention_weights.softmax(-1)
-
-        attention_weights = attention_weights.view(bs, num_query,
-                                                   self.num_heads,
-                                                   self.num_levels,
-                                                   self.num_points)
+        attention_weights = attention_weights.view(
+            bs, num_query, self.num_heads, self.num_levels, self.num_points)
 
         if reference_points.shape[-1] == 2:
             """
             For each BEV query, it owns `num_Z_anchors` in 3D space that having different heights.
-            After proejcting, each BEV query has `num_Z_anchors` reference points in each 2D image.
+            After projecting, each BEV query has `num_Z_anchors` reference points in each 2D image.
             For each referent point, we sample `num_points` sampling points.
             For `num_Z_anchors` reference points,  it has overall `num_points * num_Z_anchors` sampling points.
             """

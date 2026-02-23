@@ -183,4 +183,29 @@ def train_collate(data_batch: Sequence):
 
 @FUNCTIONS.register_module()
 def test_collate(data_batch: Sequence):
-    return data_batch
+    """Collate batch of test data
+
+    Args:
+        data_batch (Sequence[dict]):
+            Batch of `bs` of `n_aug` of `n_queue`.
+
+    """
+    imgs = []
+    img_metas = []
+    n_aug = len(data_batch[0]['img'])
+    for i in range(n_aug):
+        img = []
+        img_meta = []
+        for sample in data_batch:
+            # get only first element in queue
+            # TODO: to able to run
+            img.append(sample['img'][i][0])
+            img_meta.append(sample['img_metas'][i][0])
+
+        imgs.append(torch.stack(img, dim=0))
+        img_metas.append(img_meta)
+
+    return {
+        "img": imgs,
+        "img_metas": img_metas
+    }

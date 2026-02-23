@@ -161,12 +161,12 @@ class TemporalSelfAttention(BaseModule):
 
         Args:
             query (Tensor):
-                The input query with shape [num_queries, bs, embed_dims].
+                The input query with shape `[num_queries, bs, embed_dims]`.
                 if self.batch_first is False, else `[bs, num_queries, embed_dims]`.
             key (Tensor): The key tensor with shape
-                `(bs, num_value, embed_dims)`. It isn't used in this attention module.
+                `(bs * 2, num_value, embed_dims)`. It isn't used in this attention module.
             value (Tensor): The value tensor with shape `(num_value, bs, embed_dims)`
-                if self.batch_first is False, else `[bs, num_value, embed_dims]`.
+                if self.batch_first is False, else `[bs * 2, num_value, embed_dims]`.
             identity (Tensor): The tensor used for addition, with the
                 same shape as `query`. Default None. If None,
                 `query` will be used.
@@ -223,9 +223,8 @@ class TemporalSelfAttention(BaseModule):
         value = value.reshape(bs*self.num_bev_queue, num_value, self.num_heads, -1)
 
         # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points * 2)
-        sampling_offsets = self.sampling_offsets(query)
         # (bs, num_query, num_heads, num_bev_queue, num_levels, num_points, 2)
-        sampling_offsets = sampling_offsets.view(
+        sampling_offsets = self.sampling_offsets(query).view(
             bs, num_query, self.num_heads,  self.num_bev_queue, self.num_levels, self.num_points, 2)
 
         # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points)
@@ -239,14 +238,14 @@ class TemporalSelfAttention(BaseModule):
         attention_weights = attention_weights.view(
             bs, num_query, self.num_heads, self.num_bev_queue, self.num_levels, self.num_points)
 
+        # (bs, n_bev_queue, num_query, num_heads, n_levels, n_points, 2)
+        # (bs*n_bev_queue, num_query, num_heads, n_levels, n_points, 2)
+        sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6) \
+            .reshape(bs * self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points, 2)
         # (bs, num_bev_queue, num_query, num_heads, num_levels, num_points)
         # (bs*num_bev_queue, num_query, num_heads, num_levels, num_points)
         attention_weights = attention_weights.permute(0, 3, 1, 2, 4, 5)\
             .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points).contiguous()
-        # (bs, n_bev_queue, num_query, num_heads, n_levels, n_points, 2)
-        # (bs*n_bev_queue, num_query, num_heads, n_levels, n_points, 2)
-        sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6)\
-            .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points, 2)
 
         if reference_points.shape[-1] == 2:
             # size of bev plane

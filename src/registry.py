@@ -164,10 +164,10 @@ PARAM_SCHEDULERS = Registry(
     locations=[f'{PACKAGE}.engine'])
 # manage all kinds of metrics
 METRICS = Registry(
-    'metric', parent=MMENGINE_METRICS)
+    'metric', parent=MMENGINE_METRICS, locations=['src.evaluation.metrics'])
 # manage evaluator
 EVALUATOR = Registry(
-    'evaluator', parent=MMENGINE_EVALUATOR)
+    'evaluator', parent=MMENGINE_EVALUATOR, locations=['src.evaluation'])
 
 # manage visualizer
 VISUALIZERS = Registry(

@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader
 from mmengine.evaluator import Evaluator
 from mmengine.logging import print_log
 from mmengine.runner.amp import autocast
-from mmengine.runner.base_loop import BaseLoop
 from mmengine.runner.utils import calc_dynamic_intervals
 from src.registry import LOOPS
 from src.runner.base_loop import BaseLoop
@@ -380,7 +379,7 @@ class ValLoop(BaseLoop):
         return metrics
 
     @torch.no_grad()
-    def run_iter(self, idx, data_batch: Sequence[dict]):
+    def run_iter(self, idx: int, data_batch: Sequence[dict]):
         """Iterate one mini-batch.
 
         Args:

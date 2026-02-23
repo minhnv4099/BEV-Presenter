@@ -1,10 +1,3 @@
-#
-#  Copyright (c) 2026
-#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
-#
-
-#
-#
 # BEvFormer-tiny consumes at lease 6700M GPU memory
 # compared to bevformer_base, bevformer_tiny has
 # smaller backbone: R101-DCN -> R50
@@ -28,8 +21,8 @@ class_names = [
 ]
 
 input_modality = dict(
-    use_lidar=False,
     use_camera=True,
+    use_lidar=False,
     use_radar=False,
     use_map=False,
     use_external=False
@@ -38,7 +31,7 @@ input_modality = dict(
 _dim_ = 256
 _pos_dim_ = _dim_ // 2
 _ffn_dim_ = _dim_ * 2
-_num_levels_ = 1
+_num_levels_ = 4
 bev_h_ = 50
 bev_w_ = 50
 queue_length = 4
@@ -55,31 +48,28 @@ encoder = dict(
             dict(
                 type='TemporalSelfAttention',
                 embed_dims=_dim_,
-                num_levels=1
-            ),
+                num_levels=1),
             dict(
                 type='SpatialCrossAttention',
                 pc_range=point_cloud_range,
+                embed_dims=_dim_,
                 deformable_attention=dict(
                     type='MSDeformableAttention3D',
                     embed_dims=_dim_,
                     num_points=8,
-                    num_levels=_num_levels_),
-                embed_dims=_dim_,
-            )
+                    num_levels=_num_levels_))
         ],
         ffn_cfgs=dict(
             type="FFN",
             feedforward_channels=_ffn_dim_,
             ffn_drop=0.1,
-            num_fcs=2,
-        ),
+            num_fcs=2),
         operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
                          'ffn', 'norm')))
 
 decoder = dict(
     type='DetectionTransformerDecoder',
-    num_layers=2,
+    num_layers=3,
     return_intermediate=True,
     transformerlayers=dict(
         type='DetrTransformerDecoderLayer',
@@ -109,6 +99,8 @@ transformer = dict(
     use_shift=True,
     use_can_bus=True,
     embed_dims=_dim_,
+    num_feature_levels=_num_levels_,
+    num_cams=6,
     encoder=encoder,
     decoder=decoder
 )
@@ -135,8 +127,7 @@ pts_bbox_head = dict(
         type='LearnedPositionalEncoding',
         num_feats=_pos_dim_,
         row_num_embed=bev_h_,
-        col_num_embed=bev_w_,
-    ),
+        col_num_embed=bev_w_),
     loss_cls=dict(
         type='FocalLoss',
         use_sigmoid=True,
@@ -144,8 +135,7 @@ pts_bbox_head = dict(
         alpha=0.25,
         loss_weight=2.),
     loss_bbox=dict(type='L1Loss', loss_weight=0.5),
-    loss_iou=dict(type='GIoULoss', loss_weight=0.25),
-    train_cfg=None
+    loss_iou=dict(type='GIoULoss', loss_weight=0.0)
 )
 
 model = dict(
@@ -183,7 +173,8 @@ model = dict(
                 reg_cost=dict(type='BBox3DL1Cost', weight=0.5),
                 iou_cost=dict(type='SmoothL1Cost', weight=0.25),
                 # Fake cost. This is just to make it compatible with DETR head.
-                pc_range=point_cloud_range))))
+                pc_range=point_cloud_range)))
+)
 
 work_dir = 'experiment'
 dataset_type = 'CustomNuScenesDataset'
@@ -212,14 +203,12 @@ test_pipeline = [
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(800, 450),
-        pts_scale_ratio=[1.0, 2.0],
+        pts_scale_ratio=[1.0],
         flip=False,
         transforms=[
             dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),
             dict(type='PadMultiViewImage', size_divisor=32),
-            dict(
-                type='CustomDefaultFormatBundle3D',
-                class_names=class_names),
+            dict(type='CustomDefaultFormatBundle3D', class_names=class_names),
             dict(type='CustomCollect3D', keys=['img'])
         ])
 ]
@@ -249,7 +238,8 @@ data = dict(
         bev_size=(bev_h_, bev_w_),
         classes=class_names,
         modality=input_modality,
-        frame=(-3, -2, -1),
+        test_mode=True,
+        frame=(),
         samples_per_gpu=1,
         frames=frames),
     test=dict(
@@ -260,6 +250,7 @@ data = dict(
         bev_size=(bev_h_, bev_w_),
         classes=class_names,
         modality=input_modality,
+        test_mode=True,
         frame=frames),
     shuffler_sampler=dict(type='DistributedGroupSampler'),
     nonshuffler_sampler=dict(type='DistributedSampler')
@@ -267,29 +258,28 @@ data = dict(
 
 train_dataloader = dict(
     dataset=data['train'],
-    sampler=dict(
-        type='DefaultSampler', shuffle=True),
+    sampler=dict(type='DefaultSampler', shuffle=True),
     collate_fn=dict(type='train_collate'),
     batch_size=1,
     num_workers=0)
 
 val_dataloader = dict(
     dataset=data['val'],
-    sampler=dict(
-        type='DefaultSampler', shuffle=False),
+    sampler=dict(type='DefaultSampler', shuffle=True),
     collate_fn=dict(type='test_collate'),
-    batch_size=1,
+    batch_size=2,
     num_workers=0)
 
 test_dataloader = dict(
     dataset=data['test'],
-    sampler=dict(type='DefaultSampler', shuffle=False),
+    sampler=dict(type='DefaultSampler', shuffle=True),
+    collate_fn=dict(type='test_collate'),
     batch_size=1,
     num_workers=0)
 
 optimizer = dict(
     type='AdamW',
-    lr=1e-4,
+    lr=2e-4,
     weight_decay=0.01
     # paramwise_cfg=dict(
     #     custom_keys={
@@ -301,32 +291,38 @@ auto_scale_lr = dict(base_batch_size=16, enable=False)
 optim_wrapper = dict(type='OptimWrapper', optimizer=optimizer)
 param_scheduler = dict(type='MultiStepLR', milestones=[1, 2])
 
-val_evaluator = dict(metrics=[dict(type="BaseMetric")])
-test_evaluator = dict(metrics=[dict(type="BaseMetric")])
-
 by_epoch = False
 interval = 1
+log_interval = 1
 val_interval = 1
 max_epochs = 10
-max_iters = 1
+max_iters = 2
 
-train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=100)
+train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=val_interval)
 val_cfg = None
 test_cfg = None
+
+val_evaluator = dict(
+    metrics=[dict(type="src.NuScenesMetric", data_root=data_root, ann_file=None)])
+test_evaluator = dict(
+    metrics=[dict(type="src.NuScenesMetric", data_root=data_root, ann_file=None)])
 
 default_hooks = dict(
     runtime_info=dict(type='RuntimeInfoHook'),
     timer=dict(type='IterTimerHook'),
     sampler_seed=dict(type='DistSamplerSeedHook'),
     param_scheduler=dict(type='ParamSchedulerHook'),
-    logger=dict(type='LoggerHook', interval=1, log_metric_by_epoch=by_epoch, interval_exp_name=1000),
-    checkpoint=dict(type='CheckpointHook', interval=1, by_epoch=by_epoch))
+    logger=dict(type='LoggerHook', interval=log_interval, log_metric_by_epoch=by_epoch, interval_exp_name=1000),
+    checkpoint=dict(type='CheckpointHook', interval=interval, by_epoch=by_epoch))
 custom_hooks = [
     dict(
         type='CheckpointUploader',
-        repo_id='5421Project/bevformer',
-        interval=1,
-        by_epoch=by_epoch)
+        repo_id='5421Project',    # organization name
+        interval=interval,
+        by_epoch=by_epoch),
+    dict(
+        type='CheckpointResumer',
+        repo_id='5421Project')
 ]
 
 launcher = 'none'
