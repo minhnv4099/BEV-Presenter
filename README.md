@@ -46,16 +46,23 @@ BEVFormer
 ```
 
 ## Train
+Run below command to see instructions:
+```bash
+uv run train.py --help
+```
+Then train by, can leave everything default:
 ```bash
 uv run train.py \
    --config configs/bevformer_tiny_test.py \
-   --work-dir experiment/ \
-   --experiment-name train
+   --work-dir experiment \
+   --experiment-name baseline
 ```
 
-Checkpoints are pushed to https://huggingface.co/5421Project/bevformer.
+Checkpoints are pushed to provide **repo-id**
 
 Paste token to `~/.cache/huggingface/token` to access the above repo. 
 
 ## Config
-See [bevformer_tiny_test.py](configs/bevformer_tiny_test.py) to edit config and hyperparameters.
+See [bevformer_tiny_test.py](configs/bevformer_tiny_test.py) to understand config and edit.
+
+Can edit some fields to get various experiments.
