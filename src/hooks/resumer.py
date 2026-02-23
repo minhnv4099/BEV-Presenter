@@ -21,18 +21,15 @@ class CheckpointResumer(Hook):
 
     def __init__(self,
                  repo_id: str,
-                 organization: str,
                  token: Optional[str] = None):
         self.hfapi = HfApi(token=token)
         self.hffs = HfFileSystem(token=token)
-        self.organization = organization
         self.repo_id = repo_id
 
-        if organization:
-            platform_index = organization.rfind('://')
-            self.organization_name = organization[platform_index + +3:]
-            # repo_name waits for runner to get experiment name
-            self.repo_id = f"{self.organization_name}/{{repo_name}}"
+        if '/' in repo_id:
+            self.repo_id = f"{repo_id}-{{repo_name}}"
+        else:
+            self.repo_id = f"{repo_id}/{{repo_name}}"
 
         self.token = token
 

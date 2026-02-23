@@ -24,7 +24,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
     parser.add_argument(
         '--config',
-        help='config file path',
+        help='config file path, locate in ./configs/',
         default=DEFAULT_CONFIG)
     parser.add_argument(
         '--work-dir',
@@ -55,8 +55,8 @@ def parse_args():
     parser.add_argument(
         '--repo-id',
         default=None,
-        help="The repo to save checkpoints during training."
-             "If set organization or username(e.g. 'project', 'username'), the corresponding repo is 'project/experiment`."
+        help="The repo to save checkpoints during training. "
+             "If set organization or username(e.g. 'project', 'username'), the corresponding repo is 'project/experiment`. "
              "If set repo id (e.g. 'project/resnet'), the corresponding repo is 'project/resnet-experiment'.")
 
     parser.add_argument('--seed', type=int, default=321, help='random seed')
