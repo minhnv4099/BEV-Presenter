@@ -10,5 +10,5 @@ from .bbox_3d.utils import xywhr2xyxyr
 
 __all__ = [
     "LiDARInstance3DBoxes", "CameraInstance3DBoxes", "DepthInstance3DBoxes",
-    "BaseInstance3DBoxes", "DataContainer"
+    "BaseInstance3DBoxes", "DataContainer", "xywhr2xyxyr"
 ]

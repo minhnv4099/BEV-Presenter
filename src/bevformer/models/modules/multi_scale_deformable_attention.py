@@ -129,6 +129,7 @@ class CustomMSDeformableAttention(BaseModule):
     def forward(
         self,
         query: Tensor,
+        key: Optional[Tensor] = None,
         value: Optional[Tensor] = None,
         identity: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
@@ -173,15 +174,16 @@ class CustomMSDeformableAttention(BaseModule):
                 as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
 
         Returns:
-             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+             Tensor: forwarded results with shape `[num_query, bs, embed_dims]`.
         """
-        if identity is None:
-            identity = query
+        identity = identity if identity is not None else query
         if query_pos is not None:
             query = query + query_pos
+
         if not self.batch_first:
-            # change to (bs, num_query, embed_dims)
-            ...
+            pass
+
+        # change to (bs, n, embed_dims)
         query = query.permute(1, 0, 2)
         value = value.permute(1, 0, 2)
 
@@ -198,7 +200,7 @@ class CustomMSDeformableAttention(BaseModule):
             bs, num_query, self.num_heads, self.num_levels, self.num_points, 2)
         attention_weights = self.attention_weights(query).view(
             bs, num_query, self.num_heads, self.num_levels * self.num_points)
-        # weights cross every points in all level feature in each head
+        # weights cross every points in all level features in each head
         attention_weights = attention_weights.softmax(-1)
         attention_weights = attention_weights.view(
             bs, num_query, self.num_heads, self.num_levels, self.num_points)
@@ -221,6 +223,7 @@ class CustomMSDeformableAttention(BaseModule):
                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
         if torch.cuda.is_available() and value.is_cuda:
             # using fp16 deformable attention is unstable because it performs many sum operations
+            # No need because running on cpu is acceptable
             # if value.dtype == torch.float16:
             #     MultiScaleDeformableAttnFunction = MultiScaleDeformableAttnFunction_fp32
             # else:
@@ -237,8 +240,9 @@ class CustomMSDeformableAttention(BaseModule):
         output = self.output_proj(output)
 
         if not self.batch_first:
-            # change back to (num_query, bs ,embed_dims)
-            ...
+            pass
+
+        # change back to (num_query, bs ,embed_dims)
         output = output.permute(1, 0, 2)
 
         return self.dropout(output) + identity

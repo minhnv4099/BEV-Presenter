@@ -37,6 +37,9 @@ MANIFEST
 data/nuscenes/can_bus
 data/nuscenes/v1.0-mini
 /assets/
+/bboxes_3d/
+/experiment/
+/checkpoints/
 
 # exclude
 !/data/**/.json

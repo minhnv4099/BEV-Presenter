@@ -263,7 +263,7 @@ class TransformerLayerSequence(BaseModule):
     of `transformer_layer` in `transformer_coder`.
 
     Args:
-        transformerlayer (list[obj:`mmcv.ConfigDict`] | obj:`mmcv.ConfigDict`):
+        transformerlayers (list[obj:`mmcv.ConfigDict`] | obj:`mmcv.ConfigDict`):
             Config of transformerlayer in TransformerCoder. If it is obj:`mmcv.ConfigDict`,
              it would be repeated `num_layer` times to a list[`mmcv.ConfigDict`]. Default: None.
         num_layers (int): The number of `TransformerLayer`. Default: None.

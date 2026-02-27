@@ -336,6 +336,12 @@ class BEVFormerDetector(MVXTwoStageDetector):
             img_metas (list[list[dict]]):
                 List of `n_aug` lists of `bs`.
 
+        Returns:
+            list[dict]: List of `bs` dict with keys:
+
+                - bboxes_3d: Tensor like shape `(n_query, 9)`.
+                - scores_3d: Tensor like shape `(n_query, )`.
+                - labels_3d: Tensor like shape `(n_query, )`.
         """
         if not isinstance(img_metas, list):
             raise TypeError(f"'img_metas' must be a list, but got {type(img_metas)}")
@@ -391,7 +397,7 @@ class BEVFormerDetector(MVXTwoStageDetector):
               rescale (`bool`): Whether to rescale.
 
           Returns:
-              2-element tuple: BEV embeddings and predicted bboxes.
+              2-element tuple: BEV embeddings and list of `bs` of predicted bboxes.
           """
         img_feats = self.extract_feat(pixel_values=pixel_values, img_metas=img_metas)
 

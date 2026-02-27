@@ -85,7 +85,6 @@ class SpatialCrossAttention(BaseModule):
         spatial_shapes: Optional[Tensor] = None,
         bev_mask: Optional[Tensor] = None,
         level_start_index=None,
-        flag='encoder',
         **kwargs
     ):
         """Forward Function of Detr3DCrossAttention.
@@ -155,16 +154,14 @@ class SpatialCrossAttention(BaseModule):
         num_cams, l, bs, embed_dims = value.shape
 
         # (bs, num_cam, num_value, embed_dims)
-        # (bs*num_cam, num_value, embed_dims)
-        # key = key.permute(2, 0, 1, 3).reshape(bs * self.num_cams, l, self.embed_dims)
-        # (bs, num_cam, num_value, embed_dims)
         # (bs*num_cam, num_value, embed_dims) # NOTE: (bs*n_levels*n_cam, num_value, embed_dims)
+        # key = key.permute(2, 0, 1, 3).reshape(bs * self.num_cams, l, self.embed_dims)
         value = value.permute(2, 0, 1, 3).reshape(bs * self.num_cams, l, self.embed_dims)
         input_query = queries_rebatch.view(bs * self.num_cams, max_len, self.embed_dims)
 
         # (bs*num_cam, max_len, embed_dims)
         queries = self.deformable_attention(
-            input_query,
+            query=input_query,
             value=value,
             reference_points=reference_points_rebatch.view(bs * self.num_cams, max_len, D, 2),
             spatial_shapes=spatial_shapes,
@@ -284,9 +281,7 @@ class MSDeformableAttention3D(BaseModule):
     def forward(
         self,
         query: torch.Tensor,
-        key: Optional[torch.Tensor] = None,
         value: Optional[torch.Tensor] = None,
-        identity: Optional[torch.Tensor] = None,
         query_pos: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
         reference_points: Optional[torch.Tensor] = None,

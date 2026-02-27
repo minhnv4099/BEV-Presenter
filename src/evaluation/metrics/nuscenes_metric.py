@@ -3,19 +3,24 @@ import tempfile
 from os import path as osp
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-import mmengine
+import torch
 import numpy as np
 import pyquaternion
-import torch
+import mmengine
 from mmengine import Config, load
 from mmengine.evaluator import BaseMetric
 from mmengine.logging import MMLogger
 from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.data_classes import DetectionConfig
-from nuscenes.eval.detection.evaluate import NuScenesEval
 from nuscenes.utils.data_classes import Box as NuScenesBox
+
+from src.utils.fileio import dump
 from src.registry import METRICS
-from src.structures import (CameraInstance3DBoxes, LiDARInstance3DBoxes, xywhr2xyxyr)
+from src.structures import CameraInstance3DBoxes, LiDARInstance3DBoxes, xywhr2xyxyr
+
+
+def to_tensor(data: list):
+    return torch.as_tensor(np.array(data))
 
 
 # TODO delete this
@@ -48,6 +53,72 @@ def bbox3d2result(bboxes, scores, labels, attrs=None):
     return result_dict
 
 
+def box3d_multiclass_nms(boxes3d, boxes_for_nms, scores, score_thr, max_per_frame, nms_cfg, mlvl_attr_scores=None):
+    """
+    boxes3d: (N, 7) - predicted boxes
+    boxes_for_nms: (N, 7) - boxes projected for NMS (BEV)
+    scores: (N,) - confidence scores
+    score_thr: float - min score to keep
+    max_per_frame: int - max boxes to keep per frame
+    mlvl_attr_scores: (N, K) optional attribute scores
+    """
+
+    # 1️⃣ filter by score threshold
+    keep = scores >= score_thr
+    boxes3d = boxes3d[keep]
+    boxes_for_nms = boxes_for_nms[keep]
+    scores = scores[keep]
+    if mlvl_attr_scores is not None:
+        mlvl_attr_scores = mlvl_attr_scores[keep]
+
+    # 2️⃣ simple BEV IoU computation for NMS
+    # BEV: use x, y, w, l
+    # note: for demo, we use a simple IoU function for rectangles
+    def iou_bev(box_a, box_b):
+        # box = (x, y, w, l)
+        xa, ya, wa, la = box_a
+        xb, yb, wb, lb = box_b
+        # compute intersection
+        x1 = max(xa - wa/2, xb - wb/2)
+        y1 = max(ya - la/2, yb - lb/2)
+        x2 = min(xa + wa/2, xb + wb/2)
+        y2 = min(ya + la/2, yb + lb/2)
+        inter_area = max(0, x2 - x1) * max(0, y2 - y1)
+        area_a = wa * la
+        area_b = wb * lb
+        return inter_area / (area_a + area_b - inter_area + 1e-6)
+
+    # 3️⃣ sort by scores descending
+    order = scores.argsort(descending=True)
+    boxes3d = boxes3d[order]
+    boxes_for_nms = boxes_for_nms[order]
+    scores = scores[order]
+    if mlvl_attr_scores is not None:
+        mlvl_attr_scores = mlvl_attr_scores[order]
+
+    keep_idx = []
+    for i in range(len(boxes_for_nms)):
+        keep_flag = True
+        for j in keep_idx:
+            if iou_bev(boxes_for_nms[i][:4], boxes_for_nms[j][:4]) > nms_cfg.get("iou_thr", 0.01):
+                keep_flag = False
+                break
+        if keep_flag:
+            keep_idx.append(i)
+        if len(keep_idx) >= max_per_frame:
+            break
+
+    boxes3d = boxes3d[keep_idx]
+    scores = scores[keep_idx]
+    labels = torch.zeros(len(keep_idx), dtype=torch.int64)  # giả định class 0 nếu multiclass chưa implement
+    if mlvl_attr_scores is not None:
+        attrs = mlvl_attr_scores[keep_idx]
+    else:
+        attrs = None
+
+    return boxes3d, scores, labels, attrs
+
+
 @METRICS.register_module()
 class NuScenesMetric(BaseMetric):
     """Nuscenes evaluation metric.
@@ -70,7 +141,7 @@ class NuScenesMetric(BaseMetric):
             file path and the prefix of filename, e.g., "a/b/prefix".
             If not specified, a temp file will be created. Defaults to None.
         eval_version (str): Configuration version of evaluation.
-            Defaults to 'detection_cvpr_2019'.
+            Default to 'detection_cvpr_2019'.
         collect_device (str): Device name used for collecting results from
             different ranks during distributed training. Must be 'cpu' or
             'gpu'. Defaults to 'cpu'.
@@ -116,6 +187,7 @@ class NuScenesMetric(BaseMetric):
 
     def __init__(self,
                  data_root: str,
+                 version: str,
                  ann_file: str,
                  metric: Union[str, List[str]] = 'bbox',
                  modality: dict = dict(use_camera=False, use_lidar=True),
@@ -124,7 +196,9 @@ class NuScenesMetric(BaseMetric):
                  jsonfile_prefix: Optional[str] = None,
                  eval_version: str = 'detection_cvpr_2019',
                  collect_device: str = 'cpu',
-                 backend_args: Optional[dict] = None) -> None:
+                 backend_args: Optional[dict] = None,
+                 classes: Optional[list[str]] = None,
+                 plot_examples: int = 1):
         self.default_prefix = 'NuScenes metric'
         super(NuScenesMetric, self).__init__(
             collect_device=collect_device, prefix=prefix)
@@ -135,6 +209,7 @@ class NuScenesMetric(BaseMetric):
             )
         self.ann_file = ann_file
         self.data_root = data_root
+        self.version = version
         self.modality = modality
         self.format_only = format_only
         if self.format_only:
@@ -150,6 +225,9 @@ class NuScenesMetric(BaseMetric):
         self.eval_version = eval_version
         self.eval_detection_configs = config_factory(self.eval_version)
 
+        self.classes = classes
+        self.plot_examples = plot_examples
+
     def process(self, data_batch: dict, data_samples: Sequence[dict]) -> None:
         """Process one batch of data samples and predictions.
 
@@ -157,22 +235,28 @@ class NuScenesMetric(BaseMetric):
         be used to compute the metrics when all batches have been processed.
 
         Args:
-            data_batch (dict): A batch of data from the dataloader.
-            data_samples (Sequence[dict]): A batch of outputs from the model.
+            data_batch (dict):
+                A batch of data from the dataloader with keys:
+
+                    - img: list of `...` of tensor shape `(bs, ...)`.
+                    - img_metas: list of `...` of list of `bs` dict.
+                Not used.
+            data_samples (Sequence[dict]):
+                A batch of outputs from the model with keys:
+
+                    - bboxes_3d: Tensor like shape `(n_query, 9)`.
+                    - scores_3d: Tensor like shape `(n_query, )`.
+                    - labels_3d: Tensor like shape `(n_query, )`.
         """
-        return
-        for data_sample in data_samples:
+        img_metas = [img_meta[0] for img_meta in data_batch['img_metas']]
+        for data_sample, img_meta in zip(data_samples, img_metas):
             result = dict()
-            pred_3d = data_sample['pred_instances_3d']
-            pred_2d = data_sample['pred_instances']
-            for attr_name in pred_3d:
-                pred_3d[attr_name] = pred_3d[attr_name].to('cpu')
-            result['pred_instances_3d'] = pred_3d
-            for attr_name in pred_2d:
-                pred_2d[attr_name] = pred_2d[attr_name].to('cpu')
-            result['pred_instances'] = pred_2d
-            sample_idx = data_sample['sample_idx']
-            result['sample_idx'] = sample_idx
+            result['bboxes_3d'] = data_sample['bboxes_3d']
+            result['scores_3d'] = data_sample['scores_3d']
+            result['labels_3d'] = data_sample['labels_3d']
+            result['sample_idx'] = img_meta['frame_idx']
+            result['attr_labels'] = data_sample['labels_3d']
+
             self.results.append(result)
 
     def compute_metrics(self, results: List[dict]) -> Dict[str, float]:
@@ -185,16 +269,14 @@ class NuScenesMetric(BaseMetric):
             Dict[str, float]: The computed metrics. The keys are the names of
             the metrics, and the values are corresponding results.
         """
-        return
         logger: MMLogger = MMLogger.get_current_instance()
 
-        classes = self.dataset_meta['classes']
-        self.version = self.dataset_meta['version']
+        # classes = self.dataset_meta['classes']
+        # self.version = self.dataset_meta['version']
         # load annotations
         self.data_infos = load(
-            self.ann_file, backend_args=self.backend_args)['data_list']
-        result_dict, tmp_dir = self.format_results(results, classes,
-                                                   self.jsonfile_prefix)
+            self.ann_file, backend_args=self.backend_args)['infos']
+        result_dict, tmp_dir = self.format_results(results, self.classes, self.jsonfile_prefix)
 
         metric_dict = {}
 
@@ -205,7 +287,7 @@ class NuScenesMetric(BaseMetric):
 
         for metric in self.metrics:
             ap_dict = self.nus_evaluate(
-                result_dict, classes=classes, metric=metric, logger=logger)
+                result_dict, classes=self.classes, metric=metric, logger=logger)
             for result in ap_dict:
                 metric_dict[result] = ap_dict[result]
 
@@ -221,7 +303,9 @@ class NuScenesMetric(BaseMetric):
         """Evaluation in Nuscenes protocol.
 
         Args:
-            result_dict (dict): Formatted results of the dataset.
+            result_dict (dict):
+                Formatted results of the dataset. Key is name resulet, value is path to
+                result file.
             metric (str): Metrics to be evaluated. Defaults to 'bbox'.
             classes (List[str], optional): A list of class name.
                 Defaults to None.
@@ -256,24 +340,24 @@ class NuScenesMetric(BaseMetric):
         Returns:
             Dict[str, float]: Dictionary of evaluation details.
         """
-        from nuscenes import NuScenes
-        from nuscenes.eval.detection.evaluate import NuScenesEval
+        from src.data_apis import CustomNuScenes
+        from src.datasets.nuscnes_eval import CustomNuScenesEval
 
         output_dir = osp.join(*osp.split(result_path)[:-1])
-        nusc = NuScenes(
+        nusc = CustomNuScenes(
             version=self.version, dataroot=self.data_root, verbose=False)
         eval_set_map = {
             'v1.0-mini': 'mini_val',
             'v1.0-trainval': 'val',
         }
-        nusc_eval = NuScenesEval(
+        nusc_eval = CustomNuScenesEval(
             nusc,
             config=self.eval_detection_configs,
             result_path=result_path,
             eval_set=eval_set_map[self.version],
             output_dir=output_dir,
             verbose=False)
-        nusc_eval.main(render_curves=False)
+        nusc_eval.main(render_curves=True, plot_examples=self.plot_examples)
 
         # record metrics
         metrics = mmengine.load(osp.join(output_dir, 'metrics_summary.json'))
@@ -328,9 +412,9 @@ class NuScenesMetric(BaseMetric):
         sample_idx_list = [result['sample_idx'] for result in results]
 
         for name in results[0]:
-            if 'pred' in name and '3d' in name and name[0] != '_':
+            if 'bboxes' in name and '3d' in name and name[0] != '_':
                 print(f'\nFormating bboxes of {name}')
-                results_ = [out[name] for out in results]
+                results_ = [out for out in results]
                 tmp_file_ = osp.join(jsonfile_prefix, name)
                 box_type_3d = type(results_[0]['bboxes_3d'])
                 if box_type_3d == LiDARInstance3DBoxes:
@@ -422,34 +506,34 @@ class NuScenesMetric(BaseMetric):
             'CAM_BACK_RIGHT',
         ]
 
-        CAM_NUM = 6
+        CAM_NUM = len(camera_types)
 
         for i, det in enumerate(mmengine.track_iter_progress(results)):
 
             sample_idx = sample_idx_list[i]
-
-            frame_sample_idx = sample_idx // CAM_NUM
+            # frame_sample_idx = sample_idx // CAM_NUM
             camera_type_id = sample_idx % CAM_NUM
-
-            if camera_type_id == 0:
-                boxes_per_frame = []
-                attrs_per_frame = []
-
-            # need to merge results from images of the same sample
+            sample_token = self.data_infos[sample_idx]['token']
             annos = []
-            boxes, attrs = output_to_nusc_box(det)
-            sample_token = self.data_infos[frame_sample_idx]['token']
-            camera_type = camera_types[camera_type_id]
-            boxes, attrs = cam_nusc_box_to_global(
-                self.data_infos[frame_sample_idx], boxes, attrs, classes,
-                self.eval_detection_configs, camera_type)
-            boxes_per_frame.extend(boxes)
-            attrs_per_frame.extend(attrs)
+            boxes_per_frame = []
+            attrs_per_frame = []
+
+            for camera_type in camera_types:
+                # need to merge results from images of the same sample
+                boxes, attrs = output_to_nusc_box(det)
+                boxes, attrs = cam_nusc_box_to_global(
+                    self.data_infos[sample_idx],
+                    boxes, attrs, classes,
+                    self.eval_detection_configs,
+                    camera_type)
+                boxes_per_frame.extend(boxes)
+                attrs_per_frame.extend(attrs)
             # Remove redundant predictions caused by overlap of images
-            if (sample_idx + 1) % CAM_NUM != 0:
-                continue
-            boxes = global_nusc_box_to_cam(self.data_infos[frame_sample_idx],
-                                           boxes_per_frame, classes,
+            # if (sample_idx + 1) % CAM_NUM != 0:
+            #     continue
+            boxes = global_nusc_box_to_cam(self.data_infos[sample_idx],
+                                           boxes_per_frame,
+                                           classes,
                                            self.eval_detection_configs)
             cam_boxes3d, scores, labels = nusc_box_to_cam_box3d(boxes)
             # box nms 3d over 6 images in a frame
@@ -479,7 +563,7 @@ class NuScenesMetric(BaseMetric):
             det = bbox3d2result(cam_boxes3d, scores, labels, attrs)
             boxes, attrs = output_to_nusc_box(det)
             boxes, attrs = cam_nusc_box_to_global(
-                self.data_infos[frame_sample_idx], boxes, attrs, classes,
+                self.data_infos[sample_idx], boxes, attrs, classes,
                 self.eval_detection_configs)
 
             for i, box in enumerate(boxes):
@@ -509,7 +593,7 @@ class NuScenesMetric(BaseMetric):
         mmengine.mkdir_or_exist(jsonfile_prefix)
         res_path = osp.join(jsonfile_prefix, 'results_nusc.json')
         print(f'Results writes to {res_path}')
-        mmengine.dump(nusc_submissions, res_path)
+        dump(nusc_submissions, res_path, indent=2)
         return res_path
 
     def _format_lidar_bbox(self,
@@ -661,7 +745,9 @@ def output_to_nusc_box(
 
 
 def lidar_nusc_box_to_global(
-        info: dict, boxes: List[NuScenesBox], classes: List[str],
+        info: dict,
+        boxes: List[NuScenesBox],
+        classes: List[str],
         eval_configs: DetectionConfig) -> List[NuScenesBox]:
     """Convert the box from ego to global coordinate.
 
@@ -681,7 +767,7 @@ def lidar_nusc_box_to_global(
         # Move box to ego vehicle coord system
         lidar2ego = np.array(info['lidar_points']['lidar2ego'])
         box.rotate(
-            pyquaternion.Quaternion(matrix=lidar2ego, rtol=1e-05, atol=1e-07))
+            pyquaternion.Quaternion(lidar2ego, rtol=1e-05, atol=1e-07))
         box.translate(lidar2ego[:3, 3])
         # filter det in ego.
         cls_range_map = eval_configs.class_range
@@ -692,7 +778,7 @@ def lidar_nusc_box_to_global(
         # Move box to global coord system
         ego2global = np.array(info['ego2global'])
         box.rotate(
-            pyquaternion.Quaternion(matrix=ego2global, rtol=1e-05, atol=1e-07))
+            pyquaternion.Quaternion(ego2global, rtol=1e-05, atol=1e-07))
         box.translate(ego2global[:3, 3])
         box_list.append(box)
     return box_list
@@ -723,23 +809,28 @@ def cam_nusc_box_to_global(
     """
     box_list = []
     attr_list = []
+
     for (box, attr) in zip(boxes, attrs):
         # Move box to ego vehicle coord system
-        cam2ego = np.array(info['images'][camera_type]['cam2ego'])
+        cam2ego_r = np.array(info['cams'][camera_type]['sensor2ego_rotation'])
         box.rotate(
-            pyquaternion.Quaternion(matrix=cam2ego, rtol=1e-05, atol=1e-07))
-        box.translate(cam2ego[:3, 3])
+            pyquaternion.Quaternion(cam2ego_r, rtol=1e-05, atol=1e-07))
+        cam2ego_t = np.array(info['cams'][camera_type]['sensor2ego_translation'])
+        box.translate(cam2ego_t)
+
         # filter det in ego.
-        cls_range_map = eval_configs.class_range
-        radius = np.linalg.norm(box.center[:2], 2)
-        det_range = cls_range_map[classes[box.label]]
-        if radius > det_range:
-            continue
+        # cls_range_map = eval_configs.class_range
+        # radius = np.linalg.norm(box.center[:2], 2)
+        # det_range = cls_range_map[classes[box.label]]
+        # if radius > det_range:
+        #     continue
         # Move box to global coord system
-        ego2global = np.array(info['ego2global'])
+        ego2global_r = np.array(info['ego2global_rotation'])
         box.rotate(
-            pyquaternion.Quaternion(matrix=ego2global, rtol=1e-05, atol=1e-07))
-        box.translate(ego2global[:3, 3])
+            pyquaternion.Quaternion(ego2global_r, rtol=1e-05, atol=1e-07))
+        ego2global_t = np.array(info['ego2global_translation'])
+        box.translate(ego2global_t)
+
         box_list.append(box)
         attr_list.append(attr)
     return box_list, attr_list
@@ -764,22 +855,24 @@ def global_nusc_box_to_cam(info: dict, boxes: List[NuScenesBox],
     box_list = []
     for box in boxes:
         # Move box to ego vehicle coord system
-        ego2global = np.array(info['ego2global'])
-        box.translate(-ego2global[:3, 3])
+        ego2global_t = np.array(info['ego2global_translation'])
+        box.translate(-ego2global_t)
+        ego2global_r = np.array(info['ego2global_rotation'])
         box.rotate(
-            pyquaternion.Quaternion(matrix=ego2global, rtol=1e-05,
+            pyquaternion.Quaternion(ego2global_r, rtol=1e-05,
                                     atol=1e-07).inverse)
         # filter det in ego.
-        cls_range_map = eval_configs.class_range
-        radius = np.linalg.norm(box.center[:2], 2)
-        det_range = cls_range_map[classes[box.label]]
-        if radius > det_range:
-            continue
+        # cls_range_map = eval_configs.class_range
+        # radius = np.linalg.norm(box.center[:2], 2)
+        # det_range = cls_range_map[classes[box.label]]
+        # if radius > det_range:
+        #     continue
         # Move box to camera coord system
-        cam2ego = np.array(info['images']['CAM_FRONT']['cam2ego'])
-        box.translate(-cam2ego[:3, 3])
+        cam2ego_t = np.array(info['cams']['CAM_FRONT']['sensor2ego_translation'])
+        box.translate(-cam2ego_t)
+        cam2ego_r = np.array(info['cams']['CAM_FRONT']['sensor2ego_rotation'])
         box.rotate(
-            pyquaternion.Quaternion(matrix=cam2ego, rtol=1e-05,
+            pyquaternion.Quaternion(cam2ego_r, rtol=1e-05,
                                     atol=1e-07).inverse)
         box_list.append(box)
     return box_list
@@ -797,22 +890,22 @@ def nusc_box_to_cam_box3d(
         Tuple[:obj:`CameraInstance3DBoxes`, torch.Tensor, torch.Tensor]:
         Converted 3D bounding boxes, scores and labels.
     """
-    locs = torch.Tensor([b.center for b in boxes]).view(-1, 3)
-    dims = torch.Tensor([b.wlh for b in boxes]).view(-1, 3)
-    rots = torch.Tensor([b.orientation.yaw_pitch_roll[0]
-                         for b in boxes]).view(-1, 1)
-    velocity = torch.Tensor([b.velocity[0::2] for b in boxes]).view(-1, 2)
+    locs = to_tensor([b.center for b in boxes]).view(-1, 3)
+    dims = to_tensor([b.wlh for b in boxes]).view(-1, 3)
+    rots = to_tensor([b.orientation.yaw_pitch_roll[0]
+                      for b in boxes]).view(-1, 1)
+    velocity = to_tensor([b.velocity[0::2] for b in boxes]).view(-1, 2)
 
     # convert nusbox to cambox convention
     dims[:, [0, 1, 2]] = dims[:, [1, 2, 0]]
     rots = -rots
 
-    boxes_3d = torch.cat([locs, dims, rots, velocity], dim=1).cuda()
+    boxes_3d = torch.cat([locs, dims, rots, velocity], dim=1).cpu()
     cam_boxes3d = CameraInstance3DBoxes(
         boxes_3d, box_dim=9, origin=(0.5, 0.5, 0.5))
-    scores = torch.Tensor([b.score for b in boxes]).cuda()
-    labels = torch.LongTensor([b.label for b in boxes]).cuda()
+    scores = to_tensor([b.score for b in boxes]).cpu()
+    labels = to_tensor([b.label for b in boxes]).cpu()
     nms_scores = scores.new_zeros(scores.shape[0], 10 + 1)
     indices = labels.new_tensor(list(range(scores.shape[0])))
     nms_scores[indices, labels] = scores
-    return cam_boxes3d, nms_scores, labels
+    return cam_boxes3d, scores, labels

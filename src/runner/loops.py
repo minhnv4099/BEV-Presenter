@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -341,7 +342,8 @@ class ValLoop(BaseLoop):
                  runner: 'Runner',
                  dataloader: Union[DataLoader, Dict],
                  evaluator: Union[Evaluator, Dict, List],
-                 fp16: bool = False) -> None:
+                 fp16: bool = False,
+                 max_iters: int = -1) -> None:
         super().__init__(runner, dataloader)
 
         if isinstance(evaluator, (dict, list)):
@@ -363,6 +365,11 @@ class ValLoop(BaseLoop):
                 logger='current',
                 level=logging.WARNING)
         self.fp16 = fp16
+        if max_iters == -1:
+            self.max_iters = len(self.dataloader)
+            assert self.max_iters * len(self.dataloader.batch_size) == len(self.dataloader.dataset)
+        else:
+            self.max_iters = max_iters
 
     def run(self) -> dict:
         """Launch validation."""
@@ -370,10 +377,12 @@ class ValLoop(BaseLoop):
         self.runner.call_hook('before_val_epoch')
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
+            if idx + 1 > self.max_iters:
+                break
             self.run_iter(idx, data_batch)
 
         # compute metrics
-        metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+        metrics = self.evaluator.evaluate(self.max_iters * self.dataloader.batch_size)
         self.runner.call_hook('after_val_epoch', metrics=metrics)
         self.runner.call_hook('after_val')
         return metrics

@@ -15,7 +15,7 @@ from src.structures.bbox_3d import LiDARInstance3DBoxes, CameraInstance3DBoxes
 from src.structures.bbox_3d.utils import get_box_type
 from src.utils.logging import getLogger
 from src.utils.fileio import load
-from .nuscnes_eval import NuScenesEval_custom
+from .nuscnes_eval import CustomNuScenesEval
 from .det3d_dataset import Det3DDataset
 from .compose import Compose
 
@@ -416,12 +416,14 @@ class CustomNuScenesDataset(Dataset):
             # TODO: convert string -> index
             gt_labels_3d = [self.name2idx.get(name, -1) for name in info['gt_names']]
             gt_labels_3d = np.array(gt_labels_3d, dtype=np.int64)
+            attr_labels = np.array(info['gt_names'], dtype=np.str_)
 
             # filter out no need labels and bbox
             mask_labels = gt_labels_3d != -1
 
             ann_info['gt_bboxes_3d'] = gt_bboxes_3d[mask_labels]
             ann_info['gt_labels_3d'] = gt_labels_3d[mask_labels]
+            ann_info['attr_labels'] = attr_labels[mask_labels]
         # empty instance
         else:
             if self.with_velocity:
@@ -429,11 +431,12 @@ class CustomNuScenesDataset(Dataset):
             else:
                 ann_info['gt_bboxes_3d'] = np.zeros((0, 7), dtype=np.float32)
             ann_info['gt_labels_3d'] = np.zeros(0, dtype=np.int64)
+            ann_info['attr_labels'] = np.array(0, dtype=np.str_)
 
         if self.load_type in ['fov_image_based', 'mv_image_based']:
             ann_info['gt_bboxes'] = np.zeros((0, 4), dtype=np.float32)
             ann_info['gt_bboxes_labels'] = np.array(0, dtype=np.int64)
-            ann_info['attr_labels'] = np.array(0, dtype=np.int64)
+            # ann_info['attr_labels'] = np.array(0, dtype=np.int64)
             ann_info['centers_2d'] = np.zeros((0, 2), dtype=np.float32)
             ann_info['depths'] = np.zeros((0, ), dtype=np.float32)
 
@@ -547,7 +550,7 @@ class CustomNuScenesDataset(Dataset):
             'v1.0-mini': 'mini_val',
             'v1.0-trainval': 'val',
         }
-        self.nusc_eval = NuScenesEval_custom(
+        self.nusc_eval = CustomNuScenesEval(
             self.nusc,
             config=self.eval_detection_configs,
             result_path=result_path,

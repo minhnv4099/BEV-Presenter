@@ -138,9 +138,11 @@ class PerceptionTransformer(BaseModule):
                 feature maps from each decoder layer. Only would
                 be passed when `with_box_refine` is True. Default to None.
             cls_branches (obj:`nn.ModuleList`): Classification heads for
-                feature maps from each decoder layer.
+                feature maps from each decoder layer. Only would
+                be passed when `as_two_stage` is True. Default to None.
         Returns:
             tuple[Tensor]: Results of decoder containing the following tensor.
+
                 - bev_embed: BEV features shape `(bev_h*bev_w, bs, c)`.
                 - inter_states: Outputs from decoder. If
                     return_intermediate_dec is True output has shape \
@@ -194,6 +196,7 @@ class PerceptionTransformer(BaseModule):
             key=None,
             value=bev_embed,
             query_pos=query_pos,
+            key_pos=None,
             reference_points=reference_points,
             reg_branches=reg_branches,
             cls_branches=cls_branches,

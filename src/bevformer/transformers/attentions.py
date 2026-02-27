@@ -82,7 +82,6 @@ def eager_attention_forward(
     head_mask: Optional[torch.Tensor],
     scaling: float,
     dropout: float = 0.0,
-    **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute attention scores.
 
@@ -90,11 +89,11 @@ def eager_attention_forward(
         module:
             Module, used to check whether the module is training to apply dropout properly.
         query:
-            Query shape `(batch_size, num_heads, q_length, dim)`
+            Query shape `(batch_size, num_heads, n_query, dim)`
         key:
-            Key shape `(batch_size, num_heads, k_length, dim)`
+            Key shape `(batch_size, num_heads, n_key, dim)`
         value:
-            Value shape `(batch_size, num_heads, k_length, dimV)`. Most cases `dimV` = `dim`.
+            Value shape `(batch_size, num_heads, n_value, dimV)`. Most cases `dimV` = `dim`.
         head_mask:
             Mask of `1s` and `0s` to ignore some heads after computing attention weights.
             Shape `(num_layers, num_heads)` or `(num_heads, )`
@@ -107,14 +106,14 @@ def eager_attention_forward(
             Dropout probability after computing softmax.
 
     Returns:
-        Tuple of attention hidden states `(batch_size, q_length, num_heads, attention_head_size)`
-        and attention weights `(batch_size, num_heads, q_length, k_length)`.
+        tuple[Tensor]: Tuple of:
+
+            - attention hidden states `(batch_size, q_length, num_heads, attention_head_size)`
+            - attention weights `(batch_size, num_heads, q_length, k_length)`.
     """
-    # Take the dot product between "query" and "key" to get the raw attention scores.
     # (batch_size, num_attention_heads, q_length, k_length)
     attn_weights = torch.matmul(query, key.transpose(-1, -2)) * scaling
 
-    # Mask token if we want to
     if attention_mask is not None:
         attn_weights = attn_weights + attention_mask
 

@@ -136,7 +136,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
         img_metas: list[dict]
     ) -> tuple[Tensor, Tensor]:
         """Get 3D reference points of pillars to produce
-         the 2D normalized reference points that are projected onto the camera views.
+        the 2D normalized reference points that are projected onto the camera views.
         Args:
             reference_points (`Tensor`):
                 The 3D relative and normalized bev reference points (0 -> 1) uniformly to bev_h, bev_w, Z.
@@ -271,7 +271,6 @@ class BEVFormerEncoder(TransformerLayerSequence):
         bev_pos: Optional[Tensor] = None,
         spatial_shapes: Tensor,
         level_start_index: Optional[Tensor] = None,
-        valid_ratios: Optional[Sequence[float]] = None,
         prev_bev: Optional[Tensor] = None,
         shift: Optional[Tensor] = None,
         **kwargs
@@ -294,8 +293,6 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 different levels. With shape (num_levels, 2),
                 last dimension represents (h, w).
             level_start_index:
-            valid_ratios (Tensor):
-                The radios of valid points on the feature map, has shape `(bs, num_levels, 2)`
             prev_bev (Tensor):
                 The previous BEV feature with shape `(num_query, bs, embed_dims)`.
             shift (Tensor): Shape of [1, 2]
@@ -359,11 +356,11 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 key,
                 value,
                 bev_pos=bev_pos,
+                bev_h=bev_h,
+                bev_w=bev_w,
                 ref_2d=hybird_ref_2d,
                 ref_3d=ref_3d,
                 reference_points_cam=reference_points_cam,
-                bev_h=bev_h,
-                bev_w=bev_w,
                 spatial_shapes=spatial_shapes,
                 level_start_index=level_start_index,
                 bev_mask=bev_mask,
@@ -435,7 +432,7 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
 
         # based on the original BEVFormer paper
         assert len(operation_order) == 6
-        assert set(operation_order) == set(['self_attn', 'norm', 'cross_attn', 'ffn'])
+        assert set(operation_order) == {'self_attn', 'norm', 'cross_attn', 'ffn'}
 
     def forward(
         self,
@@ -446,16 +443,16 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
         bev_pos: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
         key_pos: Optional[Tensor] = None,
+        bev_h: Optional[int] = None,
+        bev_w: Optional[int] = None,
+        ref_2d: Optional[Tensor] = None,
+        ref_3d: Optional[Tensor] = None,
+        reference_points_cam: Optional[Tensor] = None,
         attn_masks: Optional[Tensor] = None,
         query_key_padding_mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
-        ref_2d: Optional[Tensor] = None,
-        ref_3d: Optional[Tensor] = None,
-        bev_h: Optional[int] = None,
-        bev_w: Optional[int] = None,
-        reference_points_cam: Optional[Tensor] = None,
-        spatial_shapes=None,
-        level_start_index=None,
+        spatial_shapes: Optional[Tensor] = None,
+        level_start_index: Optional[Tensor] = None,
         bev_mask: Optional[Tensor] = None,
         prev_bev: Optional[Tensor] = None,
         **kwargs
@@ -565,7 +562,7 @@ class BEVFormerLayer(CustomBaseTransformerLayer):
                     identity if self.pre_norm else None,
                     query_pos=query_pos,
                     key_pos=key_pos,
-                    # reference_points=ref_3d,
+                    reference_points=ref_3d,
                     reference_points_cam=reference_points_cam,
                     bev_mask=bev_mask,
                     attn_mask=attn_masks[attn_index],

@@ -158,8 +158,6 @@ class CheckpointUploader(Hook):
     def _push_checkpoint(self, runner: Runner):
         """Push checkpoint to hub."""
         latest_ckpt = find_latest_checkpoint(runner.experiment_dir)
-        with self.hffs.open(self.path_format('last_checkpoint'), mode='w') as f:
-            f.write(osp.basename(latest_ckpt))
 
         self.hfapi.upload_file(
             path_or_fileobj=latest_ckpt,
@@ -167,6 +165,8 @@ class CheckpointUploader(Hook):
             repo_id=self.repo_id,
             token=self.token
         )
+        with self.hffs.open(self.path_format('last_checkpoint'), mode='w') as f:
+            f.write(osp.basename(latest_ckpt))
 
     def _push_tensorboard(self, runner: Runner):
         src = osp.join(runner.experiment_dir, 'last_checkpoint')

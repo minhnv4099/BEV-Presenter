@@ -1,74 +1,41 @@
-import argparse
 import copy
-import json
-import os
-import time
-from typing import Tuple, Dict, Any
-import torch
-import numpy as np
-
-from nuscenes import NuScenes
-from nuscenes.eval.common.config import config_factory
-from nuscenes.eval.common.data_classes import EvalBoxes
-from nuscenes.eval.detection.data_classes import DetectionConfig
-from nuscenes.eval.detection.evaluate import NuScenesEval
-from pyquaternion import Quaternion
-
-from nuscenes import NuScenes
-from nuscenes.eval.common.data_classes import EvalBoxes
-from nuscenes.eval.detection.data_classes import DetectionBox
-from nuscenes.eval.detection.utils import category_to_detection_name
-from nuscenes.eval.tracking.data_classes import TrackingBox
-from nuscenes.utils.data_classes import Box
-from nuscenes.utils.geometry_utils import points_in_box
-from nuscenes.utils.splits import create_splits_scenes
-from nuscenes.eval.common.loaders import load_prediction, add_center_dist, filter_eval_boxes
 import tqdm
 from nuscenes.utils.geometry_utils import view_points, box_in_image, BoxVisibility, transform_matrix
-from torchvision.transforms.functional import rotate
-import pycocotools.mask as mask_util
-# from projects.mmdet3d_plugin.models.utils.visual import save_tensor
-from torchvision.transforms.functional import rotate
-import cv2
 import argparse
-import json
 import os
 import random
 import time
 from typing import Tuple, Dict, Any
-
-import numpy as np
-
-from nuscenes import NuScenes
-from nuscenes.eval.common.config import config_factory
-from nuscenes.eval.common.data_classes import EvalBoxes
-from nuscenes.eval.common.loaders import load_prediction, load_gt, add_center_dist, filter_eval_boxes
-from nuscenes.eval.detection.algo import accumulate, calc_ap, calc_tp
-from nuscenes.eval.detection.constants import TP_METRICS
-from nuscenes.eval.detection.data_classes import DetectionConfig, DetectionMetrics, DetectionBox, \
-    DetectionMetricDataList
-from nuscenes.eval.detection.render import summary_plot, class_pr_curve, dist_pr_curve, visualize_sample
-from nuscenes.eval.common.utils import quaternion_yaw, Quaternion
-from IPython import embed
 import json
 from typing import Any
 
 import numpy as np
 from matplotlib import pyplot as plt
 
+
 from nuscenes import NuScenes
+from nuscenes.eval.common.config import config_factory
+from nuscenes.eval.common.loaders import load_prediction, load_gt, add_center_dist, filter_eval_boxes
+from nuscenes.eval.common.utils import Quaternion
 from nuscenes.eval.common.data_classes import EvalBoxes
 from nuscenes.eval.common.render import setup_axis
-from nuscenes.eval.common.utils import boxes_to_sensor
+from nuscenes.eval.detection.algo import accumulate, calc_ap, calc_tp
+from nuscenes.eval.detection.data_classes import DetectionConfig, DetectionBox
+from nuscenes.eval.detection.render import summary_plot, class_pr_curve, dist_pr_curve, visualize_sample
+from nuscenes.eval.detection.evaluate import NuScenesEval
+from nuscenes.eval.detection.utils import category_to_detection_name
+from nuscenes.eval.detection.data_classes import DetectionMetrics, DetectionMetricData, DetectionMetricDataList
 from nuscenes.eval.detection.constants import TP_METRICS, DETECTION_NAMES, DETECTION_COLORS, TP_METRICS_UNITS, \
     PRETTY_DETECTION_NAMES, PRETTY_TP_METRICS
-from nuscenes.eval.detection.data_classes import DetectionMetrics, DetectionMetricData, DetectionMetricDataList
 from nuscenes.utils.data_classes import LidarPointCloud
 from nuscenes.utils.geometry_utils import view_points
-
+from nuscenes.eval.tracking.data_classes import TrackingBox
+from nuscenes.utils.data_classes import Box
+from nuscenes.utils.splits import create_splits_scenes
 
 
 Axis = Any
+
 
 def class_tp_curve(md_list: DetectionMetricDataList,
                    metrics: DetectionMetrics,
@@ -135,9 +102,6 @@ def class_tp_curve(md_list: DetectionMetricDataList,
 
 class DetectionBox_modified(DetectionBox):
     def __init__(self, *args, token=None, visibility=None, index=None, **kwargs):
-        '''
-        add annotation token
-        '''
         super().__init__(*args, **kwargs)
         self.token = token
         self.visibility = visibility
@@ -159,7 +123,6 @@ class DetectionBox_modified(DetectionBox):
             'attribute_name': self.attribute_name,
             'visibility': self.visibility,
             'index': self.index
-
         }
 
     @classmethod
@@ -503,7 +466,7 @@ def filter_eval_boxes_by_overlap(nusc: NuScenes,
     return eval_boxes
 
 
-class NuScenesEval_custom(NuScenesEval):
+class CustomNuScenesEval(NuScenesEval):
     """
     Dummy class for backward-compatibility. Same as DetectionEval.
     """
@@ -528,7 +491,6 @@ class NuScenesEval_custom(NuScenesEval):
         :param output_dir: Folder to save plots and results to.
         :param verbose: Whether to print to stdout.
         """
-
         self.nusc = nusc
         self.result_path = result_path
         self.eval_set = eval_set
@@ -551,9 +513,19 @@ class NuScenesEval_custom(NuScenesEval):
         # Load data.
         if verbose:
             print('Initializing nuScenes detection evaluation')
-        self.pred_boxes, self.meta = load_prediction(self.result_path, self.cfg.max_boxes_per_sample, DetectionBox,
-                                                     verbose=verbose)
-        self.gt_boxes = load_gt(self.nusc, self.eval_set, DetectionBox_modified, verbose=verbose)
+        self.pred_boxes, self.meta = load_prediction(
+            self.result_path,
+            self.cfg.max_boxes_per_sample,
+            DetectionBox,
+            verbose=verbose)
+
+        self.all_gt_boxes = load_gt(self.nusc, self.eval_set, DetectionBox_modified, verbose=verbose)
+
+        # NOTE: get subset of corresponding gt to prediction
+        self.gt_boxes = EvalBoxes()
+        for sample_token in self.pred_boxes.sample_tokens:
+            gt_bboxes = self.all_gt_boxes[sample_token]
+            self.gt_boxes.add_boxes(sample_token, gt_bboxes)
 
         assert set(self.pred_boxes.sample_tokens) == set(self.gt_boxes.sample_tokens), \
             "Samples in split doesn't match samples in predictions."
@@ -563,7 +535,6 @@ class NuScenesEval_custom(NuScenesEval):
         self.gt_boxes = add_center_dist(nusc, self.gt_boxes)
 
         # Filter boxes (distance, points per box, etc.).
-
         if verbose:
             print('Filtering predictions')
         self.pred_boxes = filter_eval_boxes(nusc, self.pred_boxes, self.cfg.class_range, verbose=verbose)
@@ -573,7 +544,6 @@ class NuScenesEval_custom(NuScenesEval):
 
         if self.overlap_test:
             self.pred_boxes = filter_eval_boxes_by_overlap(self.nusc, self.pred_boxes)
-
             self.gt_boxes = filter_eval_boxes_by_overlap(self.nusc, self.gt_boxes, verbose=True)
 
         self.all_gt = copy.deepcopy(self.gt_boxes)
@@ -591,34 +561,83 @@ class NuScenesEval_custom(NuScenesEval):
                 self.index_map[sample['token']] = index
                 index += 1
 
-    def update_gt(self, type_='vis', visibility='1', index=1):
-        if type_ == 'vis':
-            self.visibility_test = True
-            if self.visibility_test:
-                '''[{'description': 'visibility of whole object is between 0 and 40%',
-                'token': '1',
-                'level': 'v0-40'},
-                {'description': 'visibility of whole object is between 40 and 60%',
-                'token': '2',
-                'level': 'v40-60'},
-                {'description': 'visibility of whole object is between 60 and 80%',
-                'token': '3',
-                'level': 'v60-80'},
-                {'description': 'visibility of whole object is between 80 and 100%',
-                'token': '4',
-                'level': 'v80-100'}]'''
+    def main(self,
+             plot_examples: int = 0,
+             render_curves: bool = True) -> Dict[str, Any]:
+        """
+        Main function that loads the evaluation code, visualizes samples, runs the evaluation and renders stat plots.
+        :param plot_examples: How many example visualizations to write to disk.
+        :param render_curves: Whether to render PR and TP curves to disk.
+        :return: A dict that stores the high-level metrics and meta data.
+        """
+        if plot_examples > 0:
+            # Select a random but fixed subset to plot.
+            random.seed(42)
+            sample_tokens = list(self.sample_tokens)
+            random.shuffle(sample_tokens)
+            sample_tokens = sample_tokens[:plot_examples]
 
-                self.gt_boxes = filter_eval_boxes_by_visibility(self.all_gt, visibility, verbose=True)
+            # Visualize samples.
+            example_dir = os.path.join(self.output_dir, 'examples')
+            if not os.path.isdir(example_dir):
+                os.mkdir(example_dir)
+            for sample_token in sample_tokens:
+                visualize_sample(self.nusc,
+                                 sample_token,
+                                 self.gt_boxes if self.eval_set != 'test' else EvalBoxes(),
+                                 # Don't render test GT.
+                                 self.pred_boxes,
+                                 conf_th=0.0,
+                                 eval_range=max(self.cfg.class_range.values()),
+                                 savepath=os.path.join(example_dir, '{}.png'.format(sample_token)))
 
-        elif type_ == 'ord':
+        # Run evaluation.
+        metrics, metric_data_list = self.evaluate()
 
-            valid_tokens = [key for (key, value) in self.index_map.items() if value == index]
-            # from IPython import embed
-            # embed()
-            self.gt_boxes = filter_by_sample_token(self.all_gt, valid_tokens)
-            self.pred_boxes = filter_by_sample_token(self.all_preds, valid_tokens)
-        self.sample_tokens = self.gt_boxes.sample_tokens
+        # Render PR and TP curves.
+        if render_curves:
+            self.render(metrics, metric_data_list)
 
+        # Dump the metric data, meta and metrics to disk.
+        if self.verbose:
+            print('Saving metrics to: %s' % self.output_dir)
+        metrics_summary = metrics.serialize()
+        metrics_summary['meta'] = self.meta.copy()
+        with open(os.path.join(self.output_dir, 'metrics_summary.json'), 'w') as f:
+            json.dump(metrics_summary, f, indent=2)
+        with open(os.path.join(self.output_dir, 'metrics_details.json'), 'w') as f:
+            json.dump(metric_data_list.serialize(), f, indent=2)
+
+        # Print high-level metrics.
+        print('mAP: %.4f' % (metrics_summary['mean_ap']))
+        err_name_mapping = {
+            'trans_err': 'mATE',
+            'scale_err': 'mASE',
+            'orient_err': 'mAOE',
+            'vel_err': 'mAVE',
+            'attr_err': 'mAAE'
+        }
+        for tp_name, tp_val in metrics_summary['tp_errors'].items():
+            print('%s: %.4f' % (err_name_mapping[tp_name], tp_val))
+        print('NDS: %.4f' % (metrics_summary['nd_score']))
+        print('Eval time: %.1fs' % metrics_summary['eval_time'])
+
+        # Print per-class metrics.
+        print()
+        print('Per-class results:')
+        print('Object Class\tAP\tATE\tASE\tAOE\tAVE\tAAE')
+        class_aps = metrics_summary['mean_dist_aps']
+        class_tps = metrics_summary['label_tp_errors']
+        for class_name in class_aps.keys():
+            print('%s\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f'
+                  % (class_name, class_aps[class_name],
+                     class_tps[class_name]['trans_err'],
+                     class_tps[class_name]['scale_err'],
+                     class_tps[class_name]['orient_err'],
+                     class_tps[class_name]['vel_err'],
+                     class_tps[class_name]['attr_err']))
+
+        return metrics_summary
 
     def evaluate(self) -> Tuple[DetectionMetrics, DetectionMetricDataList]:
         """
@@ -696,6 +715,34 @@ class NuScenesEval_custom(NuScenesEval):
             dist_pr_curve(md_list, metrics, dist_th, self.cfg.min_precision, self.cfg.min_recall,
                           savepath=savepath('dist_pr_' + str(dist_th)))
 
+    def update_gt(self, type_='vis', visibility='1', index=1):
+        if type_ == 'vis':
+            self.visibility_test = True
+            if self.visibility_test:
+                '''[{'description': 'visibility of whole object is between 0 and 40%',
+                'token': '1',
+                'level': 'v0-40'},
+                {'description': 'visibility of whole object is between 40 and 60%',
+                'token': '2',
+                'level': 'v40-60'},
+                {'description': 'visibility of whole object is between 60 and 80%',
+                'token': '3',
+                'level': 'v60-80'},
+                {'description': 'visibility of whole object is between 80 and 100%',
+                'token': '4',
+                'level': 'v80-100'}]'''
+
+                self.gt_boxes = filter_eval_boxes_by_visibility(self.all_gt, visibility, verbose=True)
+
+        elif type_ == 'ord':
+
+            valid_tokens = [key for (key, value) in self.index_map.items() if value == index]
+            # from IPython import embed
+            # embed()
+            self.gt_boxes = filter_by_sample_token(self.all_gt, valid_tokens)
+            self.pred_boxes = filter_by_sample_token(self.all_preds, valid_tokens)
+        self.sample_tokens = self.gt_boxes.sample_tokens
+
 
 if __name__ == "__main__":
 
@@ -739,7 +786,7 @@ if __name__ == "__main__":
             cfg_ = DetectionConfig.deserialize(json.load(_f))
 
     nusc_ = NuScenes(version=version_, verbose=verbose_, dataroot=dataroot_)
-    nusc_eval = NuScenesEval_custom(nusc_, config=cfg_, result_path=result_path_, eval_set=eval_set_,
+    nusc_eval = CustomNuScenesEval(nusc_, config=cfg_, result_path=result_path_, eval_set=eval_set_,
                                     output_dir=output_dir_, verbose=verbose_)
     for vis in ['1', '2', '3', '4']:
         nusc_eval.update_gt(type_='vis', visibility=vis)

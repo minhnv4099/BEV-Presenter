@@ -157,15 +157,15 @@ class BEVFormerHead(DETRHead):
         Returns:
             dict: Dict with keys:
 
-            - bev_embed: BEV feature.
-            - all_cls_scores (Tensor): Outputs from the classification head,
-                shape [nb_dec, bs, num_query, cls_out_channels]. Note
-                cls_out_channels should includes background.
-            - all_bbox_preds (Tensor): Sigmoid outputs from the regression \
-                head with normalized coordinate format (cx, cy, w, l, cz, h, theta, vx, vy). \
-                Shape [nb_dec, bs, num_query, 10].
-            - enc_cls_scores: None
-            - enc_bbox_preds: None
+                - bev_embed: BEV feature.
+                - all_cls_scores (Tensor): Outputs from the classification head,
+                    shape [nb_dec, bs, num_query, cls_out_channels]. Note
+                    cls_out_channels should include background.
+                - all_bbox_preds (Tensor): Sigmoid outputs from the regression \
+                    head with normalized coordinate (bbox) format (cx, cy, w, l, cz, h, theta, vx, vy). \
+                    Shape [nb_dec, bs, num_query, 9].
+                - enc_cls_scores: None
+                - enc_bbox_preds: None
         """
         bs, num_cam, _, _, _ = mlvl_feats[0].shape
         dtype = mlvl_feats[0].dtype
@@ -198,9 +198,9 @@ class BEVFormerHead(DETRHead):
             grid_length=(self.real_h / self.bev_h, self.real_w / self.bev_w),
             bev_pos=bev_pos,
             prev_bev=prev_bev,
-            img_metas=img_metas,
             reg_branches=self.reg_branches if self.with_box_refine else None,  # noqa:E501
-            cls_branches=self.cls_branches if self.as_two_stage else None
+            cls_branches=self.cls_branches if self.as_two_stage else None,
+            img_metas=img_metas,
         )
 
         bev_embed, hs, init_reference, inter_references = outputs
@@ -217,7 +217,6 @@ class BEVFormerHead(DETRHead):
             outputs_class = self.cls_branches[lvl](hs[lvl])
             tmp = self.reg_branches[lvl](hs[lvl])
 
-            # TODO: check the shape of reference
             assert reference.shape[-1] == 3
             tmp[..., 0:2] += reference[..., 0:2]
             tmp[..., 0:2] = tmp[..., 0:2].sigmoid()
@@ -230,7 +229,6 @@ class BEVFormerHead(DETRHead):
             tmp[..., 4:5] = (tmp[..., 4:5] * (self.pc_range[5] - self.pc_range[2])
                              + self.pc_range[2])
 
-            # TODO: check if using sigmoid
             outputs_coord = tmp
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
@@ -267,11 +265,11 @@ class BEVFormerHead(DETRHead):
                     decoder layers, has shape
                     [nb_dec, bs, num_query, cls_out_channels].
                 all_bbox_preds (Tensor): Sigmoid regression
-                    outputs of all decode layers. Each is a 4D-tensor with
+                    outputs of all decoder layers. Each is a 4D-tensor with
                     normalized coordinate format (cx, cy, w, h) and shape
                     [nb_dec, bs, num_query, 4].
                 enc_cls_scores (Tensor): Classification scores of
-                    points on encode feature map , has shape
+                    points on encoder feature map , has shape
                     (N, h*w, num_classes). Only be passed when as_two_stage is
                     True, otherwise is None.
                 enc_bbox_preds (Tensor): Regression results of each points
@@ -353,9 +351,9 @@ class BEVFormerHead(DETRHead):
                 for all images, with normalized coordinate (cx, cy, w, h) and
                 shape `[bs, num_query, 4]`.
             gt_bboxes_list (list[BaseInstance3DBoxes]): List of `bs` ground truth bboxes for each image
-                with shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
+                with shape `(num_gts, 4)` in [tl_x, tl_y, br_x, br_y] format.
             gt_labels_list (list[Tensor]): List of `bs` ground truth class indices for each
-                image with shape (num_gts, ).
+                image with shape `(num_gts, )`.
             gt_bboxes_ignore_list (list[Tensor], optional): Bounding
                 boxes which can be ignored for each image. Default None.
         Returns:
@@ -393,7 +391,7 @@ class BEVFormerHead(DETRHead):
         loss_cls = self.loss_cls(
             cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
 
-        # Compute the average number of gt boxes accross all gpus, for
+        # Compute the average number of gt boxes across all gpus, for
         # normalization purposes
         num_total_pos = loss_cls.new_tensor([num_total_pos])
         num_total_pos = torch.clamp(torch.mean(num_total_pos), min=1).item()
@@ -422,17 +420,16 @@ class BEVFormerHead(DETRHead):
         """Compute regression and classification targets for a batch image.
         Outputs from a single decoder layer of a single feature level are used.
         Args:
-            cls_scores_list (list[Tensor]): Box score logits from a single
-                decoder layer for each image with
-                shape [num_query, cls_out_channels].
-            bbox_preds_list (list[Tensor]): Sigmoid outputs from a single
+            cls_scores_list (list[Tensor]): List of `bs` box score logits from a single
+                decoder layer for each image with shape `[num_query, cls_out_channels]`.
+            bbox_preds_list (list[Tensor]): List of sigmoid outputs from a single
                 decoder layer for each image, with normalized coordinate
-                (cx, cy, w, h) and shape [num_query, 4].
-            gt_bboxes_list (list[Tensor]): Ground truth bboxes for each image
-                with shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
-            gt_labels_list (list[Tensor]): Ground truth class indices for each
+                (cx, cy, w, h) and shape `[num_query, 4]`.
+            gt_bboxes_list (list[Tensor]): List of `bs` ground truth bboxes for each image
+                with shape `(num_gts, 4)` in [tl_x, tl_y, br_x, br_y] format.
+            gt_labels_list (list[Tensor]): List of `bs` ground truth class indices for each
                 image with shape (num_gts, ).
-            gt_bboxes_ignore_list (list[Tensor], optional): Bounding
+            gt_bboxes_ignore_list (list[Tensor], optional): List of `bs` bounding
                 boxes which can be ignored for each image. Default None.
         Returns:
             tuple: a tuple containing the following targets.
@@ -472,14 +469,14 @@ class BEVFormerHead(DETRHead):
         Outputs from a single decoder layer of a single feature level are used.
         Args:
             cls_score (Tensor): Box score logits from a single decoder layer
-                for one image. Shape [num_query, cls_out_channels].
+                for one image. Shape `[num_query, cls_out_channels]`.
             bbox_pred (Tensor): Sigmoid outputs from a single decoder layer
                 for one image, with normalized coordinate (cx, cy, w, h) and
-                shape [num_query, 4].
+                shape `[num_query, 4]`.
             gt_bboxes (Tensor): Ground truth bboxes for one image with
-                shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
+                shape `(num_gts, 4)` in [tl_x, tl_y, br_x, br_y] format.
             gt_labels (Tensor): Ground truth class indices for one image
-                with shape (num_gts, ).
+                with shape `(num_gts, )`.
             gt_bboxes_ignore (Tensor, optional): Bounding boxes
                 which can be ignored. Default None.
         Returns:
@@ -530,7 +527,7 @@ class BEVFormerHead(DETRHead):
             preds_dicts (tuple[list[dict]]): Prediction results.
             img_metas (list[dict]): Point cloud and image's meta info.
         Returns:
-            list[dict]: Decoded bbox, scores and labels after nms.
+            list[dict]: list of `bs` of decoded bbox, scores and labels after nms.
         """
         preds_dicts = self.bbox_coder.decode(preds_dicts)
 

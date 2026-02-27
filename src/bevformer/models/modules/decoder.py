@@ -61,7 +61,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
         attn_masks: Optional[Tensor] = None,
         query_key_padding_mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
-        reference_points=None,
+        reference_points: Optional[Tensor] = None,
         reg_branches: Optional[nn.ModuleList] = None,
         cls_branches: Optional[nn.ModuleList] = None,
         spatial_shapes: Optional[Tensor] = None,
@@ -72,25 +72,33 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
         Args:
             query (Tensor): Input query with shape
                 `(num_query, bs, embed_dims)`.
+            key (Tensor):
+                Key embeddings with shape `(bs, n_query, embed_dims)`.
             value (Tensor):
-                BEV features with shape `(bs, n_bev_query, embed_dims)`.
+                Value embeddings with shape `(bs, n_query, embed_dims)`.
+            query_pos (Tensor):
+                Positional encodings for query. Default to None.
+            key_pos (Tensor):
+                Positional encodings for key. Default to None.
             reference_points (Tensor): The reference
                 points sigmoid of offset. has shape
                 (bs, num_query, 4) when as_two_stage,
                 otherwise has shape (bs, num_query, 2).
-            reg_branches: (obj:`nn.ModuleList`): Used for
+            reg_branches (obj:`nn.ModuleList`): Used for
                 refining the regression results. Only would
                 be passed when with_box_refine is True,
                 otherwise would be passed a `None`.
+            cls_branches (obj:`nn.ModuleList`): List classifiers
+                used by every layers. Default to None.
             key_padding_mask (Tensor): ByteTensor for `query`, with
                 shape [bs, num_keys]. Default: None.
         Returns:
-            tuple[Tensor]: Tuple of 2 tensor:
+            tuple[Tensor]: Tuple of 2 tensor: final query embeddings and reference points:
 
                 - When ``self.return_intermediate`` is False:
-                    `[num_query, bs, embed_dims]` and `(bs, num_query, 2)`.
+                    `[1, num_query, bs, embed_dims]` and `[1, bs, num_query, 2]`.
                 - When ``self.return_intermediate`` is True:
-                    `[n_dec_layer, num_query, bs, embed_dims]` and `(n_dec_layer, bs, num_query, 2)`.
+                    `[n_dec_layer, num_query, bs, embed_dims]` and `[n_dec_layer, bs, num_query, 2]`.
         """
         output = query
         intermediate_hidden_states: list[Tensor] = []
@@ -122,6 +130,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
                 assert reference_points.shape[-1] == 3
 
                 new_reference_points = torch.zeros_like(reference_points)
+                # update reference points after a layer
                 new_reference_points[..., :2] = tmp[
                     ..., :2] + inverse_sigmoid(reference_points[..., :2])
                 new_reference_points[..., 2:3] = tmp[
@@ -142,7 +151,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
             return (torch.stack(intermediate_hidden_states),
                     torch.stack(intermediate_reference_points))
 
-        return output, reference_points
+        return output.unsqueeze(0), reference_points.unsqueeze(0)
 
 
 @TRANSFORMER_LAYERS.register_module()
@@ -265,7 +274,7 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
                     query,
                     query,
                     query,
-                    identity if self.pre_norm else None,
+                    identity=identity if self.pre_norm else None,
                     query_pos=query_pos,
                     key_pos=query_pos,
                     attn_mask=attn_masks[attn_index])
@@ -279,8 +288,9 @@ class DetrTransformerDecoderLayer(CustomBaseTransformerLayer):
             elif operation == 'cross_attn':
                 query = self.attentions[attn_index](
                     query,
+                    key,
                     value,
-                    identity if self.pre_norm else None,
+                    identity=identity if self.pre_norm else None,
                     query_pos=query_pos,
                     key_pos=key_pos,
                     reference_points=reference_points,

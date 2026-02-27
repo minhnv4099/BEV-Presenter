@@ -2,6 +2,7 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
+import warnings
 from typing import Optional
 import math
 import torch
@@ -40,10 +41,24 @@ class MultiheadAttention(BaseModule):
         self.head_dims = int(embed_dims // num_heads)
         self.all_head_size = int(self.head_dims * self.num_heads)
 
+        def _is_power_of_2(n):
+            if (not isinstance(n, int)) or (n < 0):
+                raise ValueError(
+                    'invalid input for _is_power_of_2: {} (type: {})'.format(
+                        n, type(n)))
+            return n != 0 and (n & (n - 1) == 0)
+
+        if not _is_power_of_2(self.head_dims):
+            warnings.warn(
+                "You'd better set embed_dims in "
+                'MultiheadAttention to make '
+                'the dimension of each attention head a power of 2 '
+                'which is more efficient in our CUDA implementation.')
+
         self.q_proj = nn.Linear(in_features=embed_dims, out_features=embed_dims)
         self.k_proj = nn.Linear(in_features=embed_dims, out_features=embed_dims)
         self.v_proj = nn.Linear(in_features=embed_dims, out_features=embed_dims)
-        self.output_proj = nn.Linear(embed_dims, embed_dims)
+        self.output_proj = nn.Linear(in_features=embed_dims, out_features=embed_dims)
 
         self.dropout = nn.Dropout(p=dropout)
         self.batch_first = batch_first
@@ -67,25 +82,50 @@ class MultiheadAttention(BaseModule):
         query_pos: Optional[torch.Tensor] = None,
         key_pos: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None
     ):
-        if key is None:
-            key = query
-        if value is None:
-            value = key
+        """Forward function to compute context via original multi-head attention
+
+        Args:
+            query (Tensor):
+                Query embeddings shape of `(bs, n_query, emb_dims)`.
+            key (Tensor):
+                Key embeddings shape of `(bs, n_key, emb_dims)`
+                Default to None when set as ``query``.
+            value (Tensor):
+                Value embeddings shape of `(bs, n_key, emb_dims)`
+                Default to None when set as ``key``.
+            identity (Tensor):
+                Residual embeddings to add to output shape of `(bs, n_query, emb_dims)`
+                Default to None when set as ``query``.
+            query_pos (Tensor):
+                Position encodings for query shape `(bs, n_query, emb_dims)`.
+                Default to None.
+            key_pos (Tensor):
+                Position encodings for key shape `(bs, n_query, emb_dims)`.
+                Default to None.
+            attn_mask (Tensor):
+                Attention mask to ignore some query in sequence.
+                Shape `(bs, n_query)` or `(bs, 1, n_query, n_key)`. Default to None.
+            head_mask (Tensor):
+                Attention head mask to ignore some heads.
+                Shape `(m_layers, n_heads, )` or `(n_heads, )`. Default to None.
+        """
+        key = key if key is not None else query
+        value = value if value is not None else key
+
         if query_pos is not None:
             query = query + query_pos
         if key_pos is not None:
             key = key + key_pos
 
-        if identity is None:
-            identity = query
+        identity = identity if identity else query
 
         query = query.permute(1, 0, 2)
         key = key.permute(1, 0, 2)
         value = value.permute(1, 0, 2)
 
-        bs, n_query, hidden_size = query.shape
+        bs, n_query, emb_dims = query.shape
         view_shape = (bs, -1, self.num_heads, self.head_dims)
 
         query: torch.Tensor = self.q_proj(query).view(*view_shape).transpose(1, 2)
@@ -99,7 +139,7 @@ class MultiheadAttention(BaseModule):
             value=value,
             attention_mask=attn_mask,
             head_mask=head_mask,
-            scaling=math.sqrt(hidden_size),
+            scaling=math.sqrt(emb_dims),
             dropout=0.0
         )
         context_shape = context.size()[:-2] + (self.all_head_size,)

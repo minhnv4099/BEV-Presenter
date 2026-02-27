@@ -31,7 +31,7 @@ input_modality = dict(
 _dim_ = 256
 _pos_dim_ = _dim_ // 2
 _ffn_dim_ = _dim_ * 2
-_num_levels_ = 4
+_num_levels_ = 1
 bev_h_ = 50
 bev_w_ = 50
 queue_length = 4
@@ -69,7 +69,7 @@ encoder = dict(
 
 decoder = dict(
     type='DetectionTransformerDecoder',
-    num_layers=3,
+    num_layers=6,
     return_intermediate=True,
     transformerlayers=dict(
         type='DetrTransformerDecoderLayer',
@@ -113,7 +113,7 @@ pts_bbox_head = dict(
     num_classes=10,
     in_channels=_dim_,
     sync_cls_avg_factor=True,
-    with_box_refine=False,
+    with_box_refine=True,
     as_two_stage=False,
     transformer=transformer,
     bbox_coder=dict(
@@ -134,7 +134,7 @@ pts_bbox_head = dict(
         gamma=2.0,
         alpha=0.25,
         loss_weight=2.),
-    loss_bbox=dict(type='L1Loss', loss_weight=0.5),
+    loss_bbox=dict(type='L1Loss', loss_weight=0.25),
     loss_iou=dict(type='GIoULoss', loss_weight=0.0)
 )
 
@@ -147,7 +147,7 @@ model = dict(
         type='ResNet',
         depth=50,
         num_stages=4,
-        out_indices=(3,),
+        out_indices=(3, ),
         frozen_stages=1,
         norm_cfg=dict(type='BN', requires_grad=False),
         norm_eval=True,
@@ -170,7 +170,7 @@ model = dict(
             assigner=dict(
                 type='HungarianAssigner3D',
                 cls_cost=dict(type='FocalCost', weight=2.0),
-                reg_cost=dict(type='BBox3DL1Cost', weight=0.5),
+                reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
                 iou_cost=dict(type='SmoothL1Cost', weight=0.25),
                 # Fake cost. This is just to make it compatible with DETR head.
                 pc_range=point_cloud_range)))
@@ -267,7 +267,7 @@ val_dataloader = dict(
     dataset=data['val'],
     sampler=dict(type='DefaultSampler', shuffle=True),
     collate_fn=dict(type='test_collate'),
-    batch_size=2,
+    batch_size=1,
     num_workers=0)
 
 test_dataloader = dict(
@@ -292,20 +292,29 @@ optim_wrapper = dict(type='OptimWrapper', optimizer=optimizer)
 param_scheduler = dict(type='MultiStepLR', milestones=[1, 2])
 
 by_epoch = False
-interval = 1
+interval = 100
 log_interval = 1
 val_interval = 1
 max_epochs = 10
 max_iters = 2
 
 train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=val_interval)
-val_cfg = None
-test_cfg = None
+val_cfg = dict(max_iters=2)
+test_cfg = dict()
 
 val_evaluator = dict(
-    metrics=[dict(type="src.NuScenesMetric", data_root=data_root, ann_file=None)])
+    metrics=[dict(type="src.NuScenesMetric",
+                  jsonfile_prefix='.',
+                  modality=input_modality,
+                  version=version,
+                  data_root=data_root, ann_file=data['val']['ann_file'],
+                  plot_examples=2,
+                  classes=class_names,)])
+
 test_evaluator = dict(
-    metrics=[dict(type="src.NuScenesMetric", data_root=data_root, ann_file=None)])
+    metrics=[dict(type="src.NuScenesMetric",
+                  version=version,
+                  data_root=data_root, ann_file=data['val']['ann_file'])])
 
 default_hooks = dict(
     runtime_info=dict(type='RuntimeInfoHook'),

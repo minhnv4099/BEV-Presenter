@@ -148,13 +148,11 @@ class TemporalSelfAttention(BaseModule):
         identity: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
         key_pos: Optional[Tensor] = None,
+        reference_points: Optional[Tensor] = None,
         atten_mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
-        reference_points: Optional[Tensor] = None,
         spatial_shapes: Optional[Tensor] = None,
         level_start_index: Optional[Tensor] = None,
-        flag: str = 'decoder',
-        batch_first: bool = True,
         **kwargs
     ):
         """Forward Function of MultiScaleDeformAttention.
@@ -218,7 +216,6 @@ class TemporalSelfAttention(BaseModule):
 
         if key_padding_mask is not None:
             value = value.masked_fill(key_padding_mask[..., None], 0.0)
-
         # (bs*num_bev_queue, num_value, num_head, head_dim)
         value = value.reshape(bs*self.num_bev_queue, num_value, self.num_heads, -1)
 
@@ -265,7 +262,7 @@ class TemporalSelfAttention(BaseModule):
                 f'Last dim of reference_points must be'
                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
         if torch.cuda.is_available() and value.is_cuda:
-            # # using fp16 deformable attention is unstable because it performs many sum operations
+            # using fp16 deformable attention is unstable because it performs many sum operations
             # if value.dtype == torch.float16:
             #     MultiScaleDeformableAttnFunction = MultiScaleDeformableAttnFunction_fp32
             # else:
