@@ -84,9 +84,6 @@ def track_update_dict(func: Callable[[dict], dict]):
     return wrapped_func
 
 
-# Copyright (c) OpenMMLab. All rights reserved.
-
-
 class BaseTransform(metaclass=ABCMeta):
     """Base class for all transformations.
     With debug mode to check dict which keys are added, removed, keep or updated.

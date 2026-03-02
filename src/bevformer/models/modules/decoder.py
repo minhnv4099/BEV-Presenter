@@ -138,6 +138,7 @@ class DetectionTransformerDecoder(TransformerLayerSequence):
 
                 new_reference_points = new_reference_points.sigmoid()
 
+                # block gradient from the last reference point
                 reference_points = new_reference_points.detach()
 
             # (num_query, bs, embed_dim)

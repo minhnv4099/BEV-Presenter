@@ -47,7 +47,7 @@ class CustomDefaultFormatBundle3D(BaseTransform):
 @PIPELINES.register_module()
 class TypeConverter(BaseTransform):
 
-    def transform(self, results: Dict) -> Optional[Union[Dict, Tuple[List, List]]]:
+    def transform(self, results: Dict) -> Dict:
         results['img'] = np.array(results['img'], dtype=np.float32)
         results['gt_labels_3d'] = torch.as_tensor(results['gt_labels_3d'], dtype=torch.long)
 

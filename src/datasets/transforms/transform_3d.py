@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict, Any, Optional, Iterable
 import numpy as np
 from numpy import random
 import mmcv
@@ -30,7 +30,7 @@ class ObjectRangeFilter(BaseTransform):
     def __init__(self, point_cloud_range: List[float]) -> None:
         self.pcd_range = np.array(point_cloud_range, dtype=np.float32)
 
-    def transform(self, input_dict: dict) -> dict:
+    def transform(self, input_dict: Dict[str, Any]) -> Dict:
         """Transform function to filter objects by the range.
 
         Args:
@@ -40,7 +40,7 @@ class ObjectRangeFilter(BaseTransform):
             dict: Results after filtering, 'gt_bboxes_3d', 'gt_labels_3d'
             keys are updated in the result dict.
         """
-        # Check points instance type and initialise bev_range
+        # Check points instance type and initialize bev_range
         if isinstance(input_dict['gt_bboxes_3d'],
                       (LiDARInstance3DBoxes, DepthInstance3DBoxes)):
             bev_range = self.pcd_range[[0, 1, 3, 4]]
@@ -91,7 +91,7 @@ class ObjectNameFilter(BaseTransform):
         self.classes = classes
         self.labels = list(range(len(self.classes)))
 
-    def transform(self, input_dict: dict) -> dict:
+    def transform(self, input_dict: Dict) -> Dict:
         """Transform function to filter objects by their names.
 
         Args:
@@ -103,9 +103,9 @@ class ObjectNameFilter(BaseTransform):
         """
         gt_labels_3d = input_dict['gt_labels_3d']
         keep_object_names = [n in self.labels for n in gt_labels_3d]
-        gt_bboxes_mask = np.array(keep_object_names, dtype=bool)
-        input_dict['gt_bboxes_3d'] = input_dict['gt_bboxes_3d'][gt_bboxes_mask]
-        input_dict['gt_labels_3d'] = input_dict['gt_labels_3d'][gt_bboxes_mask]
+        keep_mask = np.array(keep_object_names, dtype=bool)
+        input_dict['gt_bboxes_3d'] = input_dict['gt_bboxes_3d'][keep_mask]
+        input_dict['gt_labels_3d'] = input_dict['gt_labels_3d'][keep_mask]
 
         return input_dict
 
@@ -146,7 +146,7 @@ class PhotoMetricDistortionMultiViewImage(BaseTransform):
         self.saturation_lower, self.saturation_upper = saturation_range
         self.hue_delta = hue_delta
 
-    def transform(self, results: dict):
+    def transform(self, results: Dict) -> Dict:
         """Call function to perform photometric distortion on images.
         Args:
             results (dict): Result dict from loading pipeline.
@@ -232,7 +232,7 @@ class NormalizeMultiviewImage(BaseTransform):
         self.std = np.array(std, dtype=np.float32)
         self.to_rgb = to_rgb
 
-    def transform(self, results):
+    def transform(self, results: Dict) -> Dict:
         """Call function to normalize images.
         Args:
             results (dict): Result dict from loading pipeline.
@@ -240,7 +240,6 @@ class NormalizeMultiviewImage(BaseTransform):
             dict: Normalized results, 'img_norm_cfg' key is added into
                 result dict.
         """
-
         results['img'] = [mmcv.imnormalize(img, self.mean, self.std, self.to_rgb) for img in results['img']]
         results['img_norm_cfg'] = dict(
             mean=self.mean, std=self.std, to_rgb=self.to_rgb)
@@ -263,7 +262,7 @@ class RandomScaleImageMultiViewImage(BaseTransform):
         self.scales = scales
         assert len(self.scales) == 1
 
-    def transform(self, results):
+    def transform(self, results: Dict) -> Dict:
         """Call function to pad images, masks, semantic segmentation maps.
         Args:
             results (dict): Result dict from loading pipeline.
@@ -296,8 +295,11 @@ class RandomScaleImageMultiViewImage(BaseTransform):
 @PIPELINES.register_module()
 class PadMultiViewImage(BaseTransform):
     """Pad the multi-view image.
-    There are two padding modes: (1) pad to a fixed size and (2) pad to the
-    minimum size that is divisible by some number.
+    There are two padding modes:
+
+        - (1) pad to a fixed size.
+        - (2) pad to the minimum size that is divisible by some number.
+
     Added keys are "pad_shape", "pad_fixed_size", "pad_size_divisor",
     Args:
         size (tuple, optional): Fixed padding size.
@@ -305,15 +307,19 @@ class PadMultiViewImage(BaseTransform):
         pad_val (float, optional): Padding value, 0 by default.
     """
 
-    def __init__(self, size=None, size_divisor=None, pad_val=0):
-        self.size = size
-        self.size_divisor = size_divisor
-        self.pad_val = pad_val
+    def __init__(self,
+                 size: Optional[int | tuple[int, int]] = None,
+                 size_divisor: Optional[int] = None,
+                 pad_val: int = 0):
         # only one of size and size_divisor should be valid
         assert size is not None or size_divisor is not None
         assert size is None or size_divisor is None
 
-    def _pad_img(self, results):
+        self.size = size
+        self.size_divisor = size_divisor
+        self.pad_val = pad_val
+
+    def _pad_img(self, results: dict):
         """Pad images according to ``self.size``."""
         if self.size is not None:
             padded_img = [mmcv.impad(
@@ -322,14 +328,14 @@ class PadMultiViewImage(BaseTransform):
             padded_img = [mmcv.impad_to_multiple(
                 img, self.size_divisor, pad_val=self.pad_val) for img in results['img']]
 
-        results['ori_shape'] = [img.shape for img in results['img']]
         results['img'] = padded_img
+        results['ori_shape'] = [img.shape for img in results['img']]
         results['img_shape'] = [img.shape for img in padded_img]
         results['pad_shape'] = [img.shape for img in padded_img]
         results['pad_fixed_size'] = self.size
         results['pad_size_divisor'] = self.size_divisor
 
-    def transform(self, results):
+    def transform(self, results: dict) -> dict:
         """Call function to pad images, masks, semantic segmentation maps.
         Args:
             results (dict): Result dict from loading pipeline.
@@ -404,13 +410,14 @@ class CustomCollect3D(BaseTransform):
         self.keys = keys
         self.meta_keys = meta_keys
 
-    def transform(self, results):
+    def transform(self, results: Dict) -> Dict:
         """Call function to collect keys in results. The keys in ``meta_keys``
         will be converted to :obj:`mmcv.DataContainer`.
         Args:
             results (dict): Result dict contains the data to collect.
         Returns:
-            dict: The result dict contains the following keys
+            dict: The result dict contains the following keys:
+
                 - keys in ``self.keys``
                 - ``img_metas``
         """

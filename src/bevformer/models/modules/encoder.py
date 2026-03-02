@@ -13,9 +13,9 @@ import torch
 from torch import Tensor
 from torch.version import __version__ as TORCH_VERSION
 
-from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
 from mmengine.utils.version_utils import digit_version
-
+from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
+from src.device import get_device
 from src.utils.logging import getLogger
 from src.utils.fp16_utils import force_fp32, auto_fp16
 from src.typing import ConfigType
@@ -66,7 +66,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
         bs: int = 1,
         num_points_in_pillar=4,
         dim: Literal['3d', '2d'] = '3d',
-        device='cpu',
+        device: Optional[torch.device, str] = None,
         dtype=torch.float
     ) -> Tensor:
         """Get the reference points for bev query used in SCA and TSA.
@@ -86,6 +86,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 - Shape `(bs, num_points_in_pillar, HxW, 3)` if ``3d``, points for every points in pillar.
                 - Shape `(bs, HxW, 1, 2)` if ``2d``, reference points for every bev query.
         """
+        device = device or get_device()
         # reference points in 3D space, used in spatial cross-attention (SCA)
         if dim == '3d':
             # shape `(num_points_in_pillar, H, W)`
@@ -246,7 +247,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
             bev_mask = torch.nan_to_num(bev_mask)
         else:
             bev_mask = bev_mask.new_tensor(
-                np.nan_to_num(bev_mask.cpu().numpy()))
+                np.nan_to_num(bev_mask.to(get_device()).numpy()))
 
         # shape `(num_cam, bs, H*W, D, 2)`
         reference_points_cam = reference_points_cam.permute(2, 1, 3, 0, 4)

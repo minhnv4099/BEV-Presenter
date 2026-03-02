@@ -9,7 +9,7 @@ _lock = threading.RLock()
 T = TypeVar('T')
 
 
-def _accquire_lock() -> None:
+def _acquire_lock() -> None:
     """Acquire the module-level lock for serializing access to shared data.
 
     This should be released with _release_lock().
@@ -101,7 +101,7 @@ class ManagerMixin(metaclass=ManagerMeta):
             object: Corresponding name instance, the latest instance, or root
             instance.
         """
-        _accquire_lock()
+        _acquire_lock()
         assert isinstance(name, str), \
             f'type of name should be str, but got {type(cls)}'
         instance_dict = cls._instance_dict  # type: ignore
@@ -138,7 +138,7 @@ class ManagerMixin(metaclass=ManagerMeta):
         Returns:
             object: Latest created instance.
         """
-        _accquire_lock()
+        _acquire_lock()
         if not cls._instance_dict:
             raise RuntimeError(
                 f'Before calling {cls.__name__}.get_current_instance(), you '

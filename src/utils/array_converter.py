@@ -1,10 +1,15 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+#
+#  Copyright (c) 2026
+#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
+#
+
 import functools
 from inspect import getfullargspec
 from typing import Callable, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
+from src.device import get_device
 
 TemplateArrayType = Union[np.ndarray, torch.Tensor, list, tuple, int, float]
 
@@ -16,11 +21,11 @@ def array_converter(to_torch: bool = True,
     """Wrapper function for data-type agnostic processing.
 
     First converts input arrays to PyTorch tensors or NumPy arrays for middle
-    calculation, then convert output to original data-type if `recover=True`.
+    calculation, then convert output to original data-type if `recover=`True``.
 
     Args:
         to_torch (bool): Whether to convert to PyTorch tensors for middle
-            calculation. Defaults to True.
+            calculation. Defaults to ``True``.
         apply_to (Tuple[str]): The arguments to which we apply data-type
             conversion. Defaults to an empty tuple.
         template_arg_name_ (str, optional): Argument serving as the template
@@ -233,7 +238,7 @@ class ArrayConverter:
         """
         self.array_type = type(array)
         self.is_num = False
-        self.device = 'cpu'
+        self.device = get_device()
 
         if isinstance(array, np.ndarray):
             self.dtype = array.dtype
@@ -306,7 +311,7 @@ class ArrayConverter:
                 return input_array
             elif target_type == np.ndarray:
                 # default dtype is float32
-                converted_array = input_array.cpu().numpy().astype(np.float32)
+                converted_array = input_array.to(get_device()).numpy().astype(np.float32)
             else:
                 # default dtype is float32, device is 'cpu'
                 converted_array = torch.tensor(
@@ -317,7 +322,7 @@ class ArrayConverter:
             if isinstance(target_array, array_type):
                 return input_array
             elif isinstance(target_array, np.ndarray):
-                converted_array = input_array.cpu().numpy().astype(
+                converted_array = input_array.to(get_device()).numpy().astype(
                     target_array.dtype)
             else:
                 converted_array = target_array.new_tensor(input_array)
@@ -339,7 +344,7 @@ class ArrayConverter:
         if isinstance(input_array, self.array_type):
             return input_array
         elif isinstance(input_array, torch.Tensor):
-            converted_array = input_array.cpu().numpy().astype(self.dtype)
+            converted_array = input_array.to(get_device()).numpy().astype(self.dtype)
         else:
             converted_array = torch.tensor(
                 input_array, dtype=self.dtype, device=self.device)

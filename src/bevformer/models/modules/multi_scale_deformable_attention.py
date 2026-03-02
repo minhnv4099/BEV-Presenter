@@ -16,6 +16,7 @@ from typing import Optional
 from mmengine.model import BaseModule, constant_init, xavier_init
 from src.bevformer.transformers.attentions import multi_scale_deformable_attn_pytorch
 from src.registry import ATTENTIONS
+from src.device import get_device
 from src.utils.logging import getLogger
 from src.typing import ConfigType
 
@@ -111,6 +112,7 @@ class CustomMSDeformableAttention(BaseModule):
         constant_init(self.sampling_offsets, 0.)
         thetas = torch.arange(
             self.num_heads,
+            device=get_device(),
             dtype=torch.float32) * (2.0 * math.pi / self.num_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
         grid_init = (grid_init /

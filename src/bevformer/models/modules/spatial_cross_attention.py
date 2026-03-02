@@ -16,6 +16,7 @@ from src.utils.logging import getLogger
 from src.utils.fp16_utils import force_fp32
 from ...models.utils.bricks import build_attention
 from src.utils.telemetry import timing
+from src.device import get_device
 from src.registry import ATTENTIONS
 from src.typing import ConfigType
 
@@ -62,7 +63,7 @@ class SpatialCrossAttention(BaseModule):
 
         self.deformable_attention = build_attention(deformable_attention)
         self.output_proj = nn.Linear(embed_dims, embed_dims)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)  # type: ignore
         self.init_weight()
 
     def init_weight(self):
@@ -74,19 +75,18 @@ class SpatialCrossAttention(BaseModule):
     def forward(
         self,
         query: Tensor,
-        key: Tensor,
-        value: Tensor,
-        residual: Optional[Tensor] = None,
+        key: Optional[Tensor] = None,
+        value: Optional[Tensor] = None,
+        identity: Optional[Tensor] = None,
         query_pos: Optional[Tensor] = None,
         key_pos: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
         reference_points: Optional[Tensor] = None,
         reference_points_cam: Optional[Tensor] = None,
         spatial_shapes: Optional[Tensor] = None,
+        level_start_index: Optional[Tensor] = None,
         bev_mask: Optional[Tensor] = None,
-        level_start_index=None,
-        **kwargs
-    ):
+        **kwargs):
         """Forward Function of Detr3DCrossAttention.
         Args:
             query (Tensor):
@@ -96,7 +96,7 @@ class SpatialCrossAttention(BaseModule):
                 Input multi-camera features with shape `(num_cam, num_value, bs, embed_dims)`.
             value (Tensor):
                 Input multi-camera features with shape `(num_cam, num_value, bs, embed_dims)`.
-            residual (Tensor): The tensor used for addition, with the
+            identity (Tensor): The tensor used for addition, with the
                 same shape as `query`. Default None. If None, `query` will be used.
             query_pos (Tensor): The positional encoding for `query`.
                 Default: None.
@@ -125,8 +125,8 @@ class SpatialCrossAttention(BaseModule):
         Returns:
              Tensor: forwarded results with shape [num_query, bs, embed_dims].
         """
-        if residual is None:
-            residual = query
+        if identity is None:
+            identity = query
         if query_pos is not None:
             query = query + query_pos
 
@@ -165,7 +165,8 @@ class SpatialCrossAttention(BaseModule):
             value=value,
             reference_points=reference_points_rebatch.view(bs * self.num_cams, max_len, D, 2),
             spatial_shapes=spatial_shapes,
-            level_start_index=level_start_index
+            level_start_index=level_start_index,
+            key_padding_mask=key_padding_mask
         ).view(bs, self.num_cams, max_len, self.embed_dims)
 
         for j in range(bs):
@@ -178,7 +179,7 @@ class SpatialCrossAttention(BaseModule):
         slots = slots / count[..., None]
         slots = self.output_proj(slots)
 
-        return self.dropout(slots) + residual
+        return self.dropout(slots) + identity
 
 
 @ATTENTIONS.register_module()
@@ -262,6 +263,7 @@ class MSDeformableAttention3D(BaseModule):
         constant_init(self.sampling_offsets, 0.)
         thetas = torch.arange(
             self.num_heads,
+            device=get_device(),
             dtype=torch.float32) * (2.0 * math.pi / self.num_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
         grid_init = (grid_init /
@@ -381,7 +383,6 @@ class MSDeformableAttention3D(BaseModule):
 
         #  sampling_locations.shape: bs, num_query, num_heads, num_levels, num_all_points, 2
         #  attention_weights.shape: bs, num_query, num_heads, num_levels, num_all_points
-
         if torch.cuda.is_available() and value.is_cuda:
             # if value.dtype == torch.float16:
             #     MultiScaleDeformableAttnFunction = MultiScaleDeformableAttnFunction_fp32
@@ -397,6 +398,7 @@ class MSDeformableAttention3D(BaseModule):
                 value, spatial_shapes, sampling_locations, attention_weights)
 
         if not self.batch_first:
+            # change back (, bs, ...) as input
             output = output.permute(1, 0, 2)
 
         return output

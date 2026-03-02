@@ -8,18 +8,21 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
-from mmengine.model import xavier_init
 from torch.nn.init import normal_
-from mmengine.model import BaseModule
 from torchvision.transforms.functional import rotate
+from mmengine.model import xavier_init
+from mmengine.model import BaseModule
 
 from src.typing import ConfigType
 from src.registry import TRANSFORMERS
+from src.utils.logging import getLogger
+from src.utils.fp16_utils import force_fp32, auto_fp16
 from src.bevformer.models.utils.bricks import build_transformer_block
 from .temporal_self_attention import TemporalSelfAttention
 from .spatial_cross_attention import MSDeformableAttention3D
 from .multi_scale_deformable_attention import CustomMSDeformableAttention
-from src.utils.fp16_utils import force_fp32, auto_fp16
+
+logger = getLogger(__name__)
 
 
 @TRANSFORMERS.register_module()
@@ -36,12 +39,12 @@ class PerceptionTransformer(BaseModule):
 
     def __init__(
         self,
+        embed_dims: int = 256,
         num_feature_levels: int = 4,
         num_cams: int = 6,
         two_stage_num_proposals: int = 300,
         encoder: Optional[ConfigType] = None,
         decoder: Optional[ConfigType] = None,
-        embed_dims: int = 256,
         rotate_prev_bev: bool = True,
         use_shift: bool = True,
         use_can_bus: bool = True,
@@ -93,12 +96,14 @@ class PerceptionTransformer(BaseModule):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
         for m in self.modules():
-            if isinstance(m, MSDeformableAttention3D) or isinstance(m, TemporalSelfAttention) \
-                    or isinstance(m, CustomMSDeformableAttention):
+            if isinstance(m, (MSDeformableAttention3D,
+                              TemporalSelfAttention,
+                              CustomMSDeformableAttention)):
                 try:
                     m.init_weight()
                 except AttributeError:
                     m.init_weights()
+
         normal_(self.level_embeds)
         normal_(self.cams_embeds)
         xavier_init(self.reference_points, distribution='uniform', bias=0.)
@@ -147,7 +152,7 @@ class PerceptionTransformer(BaseModule):
                 - inter_states: Outputs from decoder. If
                     return_intermediate_dec is True output has shape \
                       (num_dec_layers, bs, num_query, embed_dims), else has \
-                      shape (1, bs, num_query, embed_dims).
+                      shape (1, num_query, bs, embed_dims).
                 - init_reference_out: The initial value of reference \
                     points, has shape (bs, num_queries, 4).
                 - inter_references_out: The internal value of reference \
@@ -176,7 +181,7 @@ class PerceptionTransformer(BaseModule):
             prev_bev=prev_bev,
             **kwargs)
 
-        # (bev_h*bev_w, bs, embed_dims)
+        # (bev_h * bev_w, bs, embed_dims)
         bev_embed = bev_embed.permute(1, 0, 2)
 
         bs = mlvl_feats[0].size(0)

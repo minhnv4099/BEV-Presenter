@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import warnings
 from copy import deepcopy
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Sequence
 
 import mmengine
 from src.datasets.compose import Compose
@@ -40,8 +40,8 @@ class MultiScaleFlipAug3D(BaseTransform):
                  flip: bool = False,
                  flip_direction: str = 'horizontal',
                  pcd_horizontal_flip: bool = False,
-                 pcd_vertical_flip: bool = False) -> None:
-        self.transforms = Compose(transforms)
+                 pcd_vertical_flip: bool = False):
+        self.transforms: Compose = Compose(transforms)
         self.img_scale = img_scale if isinstance(img_scale, list) else [img_scale]
         self.pts_scale_ratio = pts_scale_ratio \
             if isinstance(pts_scale_ratio, list) \
@@ -85,6 +85,7 @@ class MultiScaleFlipAug3D(BaseTransform):
             if self.flip and self.pcd_horizontal_flip else [False]
         pcd_vertical_flip_aug = [False, True] \
             if self.flip and self.pcd_vertical_flip else [False]
+
         for scale in self.img_scale:
             # TODO refactor according to augtest docs
             self.transforms.transforms[0].scale = scale

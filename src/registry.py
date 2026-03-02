@@ -1,10 +1,7 @@
-# Copyright (c) OpenMMLab. All rights reserved.
-"""MMENGINEection3D provides 17 registry nodes to support using modules across
-projects. Each node is a child of the root registry in mmengine.
-
-More details can be found at
-https://mmengine.readthedocs.io/en/latest/tutorials/registry.html.
-"""
+#
+#  Copyright (c) 2026
+#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
+#
 from mmengine.registry import DATA_SAMPLERS as MMENGINE_DATA_SAMPLERS
 from mmengine.registry import DATASETS as MMENGINE_DATASETS
 from mmengine.registry import EVALUATOR as MMENGINE_EVALUATOR
@@ -68,31 +65,13 @@ MODELS = Registry(
 # mangage all kinds of model wrappers like 'MMDistributedDataParallel'
 MODEL_WRAPPERS = Registry(
     'model_wrapper',
-    parent=MMENGINE_MODEL_WRAPPERS,
-    locations=[f'{PACKAGE}.models'])
+    parent=MMENGINE_MODEL_WRAPPERS, locations=[f'{PACKAGE}.models'])
 # mangage all kinds of weight initialization modules like `Uniform`
 WEIGHT_INITIALIZERS = Registry(
     'weight initializer',
-    parent=MMENGINE_WEIGHT_INITIALIZERS,
-    locations=[f'{PACKAGE}.models'])
+    parent=MMENGINE_WEIGHT_INITIALIZERS, locations=[f'{PACKAGE}.models'])
 
 # manage all kinds of transformer components
-ATTENTIONS = Registry(
-    'attention', scope='attention', parent=MODELS,
-    locations=[f'{PACKAGE}.models'])
-TRANSFORMER_LAYERS = Registry(
-    "transformer_layer", scope="transformer_layer", parent=MODELS,
-    locations=[f'{PACKAGE}.models'])
-TRANSFORMER_BLOCKS = Registry(
-    "transformer_block", scope="transformer_block", parent=MODELS,
-    locations=[f'{PACKAGE}.models'])
-TRANSFORMERS = Registry(
-    "transformer", scope="transformer", parent=MODELS,
-    locations=[f'{PACKAGE}.models'])
-POSITION_ENCODINGS = Registry(
-    'position_encoding', scope='position_encoding', parent=MODELS,
-    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.layers'])
-
 ATTENTIONS = MODELS
 TRANSFORMER_LAYERS = MODELS
 TRANSFORMER_BLOCKS = MODELS
@@ -100,20 +79,6 @@ TRANSFORMERS = MODELS
 POSITION_ENCODINGS = MODELS
 
 # manage all kinds of extractors
-BACKBONES = Registry(
-    "backbone", scope="backbone", parent=MODELS,
-    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.backbones'])
-NECKS = Registry(
-    "neck", scope="neck", parent=MODELS,
-    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.necks'])
-# manage all kinds of heads
-HEADS = Registry(
-    "head", scope="head", parent=MODELS, locations=[f'{PACKAGE}.models'])
-# manage all kinds of detectors
-DETECTORS = Registry(
-    "detector", scope="detector", parent=MODELS,
-    locations=[f'{PACKAGE}.models', f'{PACKAGE}.models.detectors'])
-
 BACKBONES = MODELS
 NECKS = MODELS
 HEADS = MODELS
@@ -124,7 +89,7 @@ TASK_UTILS = Registry(
     'task util', parent=MMENGINE_TASK_UTILS, locations=[f'{PACKAGE}.models'])
 BBOX_CODERS = Registry(
     "bbox_coder", scope="bbox_coder",
-    locations=[f'{PACKAGE}.core.bbox'])
+    locations=[f'src.bevformer.core.bbox'])
 BBOX_SAMPLERS = Registry(
     "bbox_sampler", scope="bbox_sampler",
     locations=[f'src.bevformer.core.bbox.samplers'])
@@ -162,6 +127,7 @@ PARAM_SCHEDULERS = Registry(
     'parameter scheduler',
     parent=MMENGINE_PARAM_SCHEDULERS,
     locations=[f'{PACKAGE}.engine'])
+
 # manage all kinds of metrics
 METRICS = Registry(
     'metric', parent=MMENGINE_METRICS, locations=['src.evaluation.metrics'])
@@ -171,21 +137,19 @@ EVALUATOR = Registry(
 
 # manage visualizer
 VISUALIZERS = Registry(
-    'visualizer',
-    parent=MMENGINE_VISUALIZERS)
+    'visualizer', parent=MMENGINE_VISUALIZERS)
 # manage visualizer backend
 VISBACKENDS = Registry(
-    'vis_backend',
-    parent=MMENGINE_VISBACKENDS)
+    'vis_backend', parent=MMENGINE_VISBACKENDS)
 
 # manage logprocessor
 LOG_PROCESSORS = Registry(
-    'log_processor',
-    parent=MMENGINE_LOG_PROCESSORS)
+    'log_processor', parent=MMENGINE_LOG_PROCESSORS)
 
 FUNCTIONS = Registry(
-    'function', parent=MMENGINE_FUNCTIONS,
-    locations=['src.datasets'])
+    'function',
+    parent=MMENGINE_FUNCTIONS, locations=['src.datasets'])
+
 # manage inferencer
 # INFERENCERS = Registry(
 #     'inferencer',

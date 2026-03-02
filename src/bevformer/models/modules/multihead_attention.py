@@ -14,19 +14,18 @@ from src.registry import ATTENTIONS
 from src.utils.logging import getLogger
 from src.bevformer.transformers.attentions import eager_attention_forward
 
-logger = getLogger(__name__)
+logger = getLogger(name=__name__)
 
 
 @ATTENTIONS.register_module()
 class MultiheadAttention(BaseModule):
 
     def __init__(self,
-                 embed_dims: int,
+                 embed_dims: int = 256,
                  num_heads: int = 6,
                  dropout: Optional[float] = None,
                  init_cfg: Optional[dict] = None,
-                 batch_first: bool = True,
-                 ):
+                 batch_first: bool = True):
         super().__init__(init_cfg)
         if embed_dims % num_heads != 0:
             raise ValueError(
@@ -119,7 +118,11 @@ class MultiheadAttention(BaseModule):
         if key_pos is not None:
             key = key + key_pos
 
-        identity = identity if identity else query
+        identity = identity if identity is not None else query
+
+        if not self.batch_first:
+            # change tensor to (bs, ...)
+            pass
 
         query = query.permute(1, 0, 2)
         key = key.permute(1, 0, 2)
@@ -146,6 +149,10 @@ class MultiheadAttention(BaseModule):
         context = context.view(context_shape)
 
         output = self.output_proj(context)
+
+        if not self.batch_first:
+            # change back (, bs, ...) as input
+            ...
         output = output.permute(1, 0, 2)
 
         return self.dropout(output) + identity

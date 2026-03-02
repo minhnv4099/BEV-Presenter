@@ -11,7 +11,7 @@ __pycache__/
 build/
 ckpts/
 ckpts
-/data
+/data/
 test/
 val/
 work_dirs/
@@ -34,13 +34,13 @@ share/python-wheels/
 MANIFEST
 /.idea
 
-data/nuscenes/can_bus
-data/nuscenes/v1.0-mini
+/data/nuscenes/can_bus
+/data/nuscenes/v1.0-mini
 /assets/
 /bboxes_3d/
 /experiment/
 /checkpoints/
-
+/results/
 # exclude
 !/data/**/.json
 !/data/**/.plk
@@ -148,4 +148,3 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-/assets/nuscenes-schema.svg

@@ -4,7 +4,7 @@
 # smaller BEV: 200*200 -> 50*50
 # less encoder layers: 6 -> 3
 # smaller input size: 1600*900 -> 800*450
-# multi-scale feautres -> single scale features (C5)
+# multi-scale features -> single scale features (C5)
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53],
@@ -28,6 +28,7 @@ input_modality = dict(
     use_external=False
 )
 
+scales = [0.5]
 _dim_ = 256
 _pos_dim_ = _dim_ // 2
 _ffn_dim_ = _dim_ * 2
@@ -134,7 +135,7 @@ pts_bbox_head = dict(
         gamma=2.0,
         alpha=0.25,
         loss_weight=2.),
-    loss_bbox=dict(type='L1Loss', loss_weight=0.25),
+    loss_bbox=dict(type='L1Loss', loss_weight=0.5),
     loss_iou=dict(type='GIoULoss', loss_weight=0.0)
 )
 
@@ -170,18 +171,11 @@ model = dict(
             assigner=dict(
                 type='HungarianAssigner3D',
                 cls_cost=dict(type='FocalCost', weight=2.0),
-                reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
+                reg_cost=dict(type='BBox3DL1Cost', weight=0.5),
                 iou_cost=dict(type='SmoothL1Cost', weight=0.25),
                 # Fake cost. This is just to make it compatible with DETR head.
                 pc_range=point_cloud_range)))
 )
-
-work_dir = 'experiment'
-dataset_type = 'CustomNuScenesDataset'
-version = "v1.0-mini"
-data_root = f'data/nuscenes/{version}/'
-file_client_args = dict(backend='disk')
-frames = [-3, -2, -1]
 
 train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),  # loading.py
@@ -190,7 +184,7 @@ train_pipeline = [
     dict(type='ObjectNameFilter', classes=class_names),  # transform_3d.py
     dict(type='PhotoMetricDistortionMultiViewImage'),  # transform_3d.py
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),  # transform_3d.py
-    dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),  # transform_3d.py
+    dict(type='RandomScaleImageMultiViewImage', scales=scales),  # transform_3d.py
     dict(type='PadMultiViewImage', size_divisor=32),  # transform_3d.py
     dict(type='CustomDefaultFormatBundle3D', class_names=class_names),  # formating.py
     dict(type='CustomCollect3D', keys=['gt_bboxes_3d', 'gt_labels_3d', 'img']),  # transform_3d.py
@@ -206,12 +200,19 @@ test_pipeline = [
         pts_scale_ratio=[1.0],
         flip=False,
         transforms=[
-            dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),
+            dict(type='RandomScaleImageMultiViewImage', scales=scales),
             dict(type='PadMultiViewImage', size_divisor=32),
             dict(type='CustomDefaultFormatBundle3D', class_names=class_names),
             dict(type='CustomCollect3D', keys=['img'])
         ])
 ]
+
+work_dir = 'experiment'
+dataset_type = 'CustomNuScenesDataset'
+version = "v1.0-mini"
+data_root = f'data/nuscenes/{version}/'
+file_client_args = dict(backend='disk')
+frames = [-3, -2, -1]
 
 data = dict(
     samples_per_gpu=1,
@@ -277,44 +278,34 @@ test_dataloader = dict(
     batch_size=1,
     num_workers=0)
 
-optimizer = dict(
-    type='AdamW',
-    lr=2e-4,
-    weight_decay=0.01
-    # paramwise_cfg=dict(
-    #     custom_keys={
-    #         'img_backbone': dict(lr_mult=0.1),
-    #     }),
-)
-
-auto_scale_lr = dict(base_batch_size=16, enable=False)
-optim_wrapper = dict(type='OptimWrapper', optimizer=optimizer)
-param_scheduler = dict(type='MultiStepLR', milestones=[1, 2])
-
-by_epoch = False
-interval = 100
-log_interval = 1
-val_interval = 1
-max_epochs = 10
-max_iters = 2
-
-train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=val_interval)
-val_cfg = dict(max_iters=2)
-test_cfg = dict()
-
 val_evaluator = dict(
-    metrics=[dict(type="src.NuScenesMetric",
-                  jsonfile_prefix='.',
-                  modality=input_modality,
-                  version=version,
-                  data_root=data_root, ann_file=data['val']['ann_file'],
-                  plot_examples=2,
-                  classes=class_names,)])
+    metrics=[
+        dict(type="src.NuScenesMetric",
+             jsonfile_prefix='results',
+             modality=input_modality,
+             version=version,
+             data_root=data_root, ann_file=data['val']['ann_file'],
+             plot_examples=5,
+             plot_every_run=True,
+             classes=class_names)])
 
 test_evaluator = dict(
     metrics=[dict(type="src.NuScenesMetric",
                   version=version,
                   data_root=data_root, ann_file=data['val']['ann_file'])])
+
+by_epoch = False
+interval = 1 if by_epoch else 100
+val_interval = 1 if by_epoch else 20
+log_interval = 5
+max_epochs = 24
+max_iters = 100
+val_max_iters = 10
+test_max_iters = -1
+
+train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=val_interval)
+val_cfg = dict(max_iters=val_max_iters)
+test_cfg = dict(max_iters=test_max_iters)
 
 default_hooks = dict(
     runtime_info=dict(type='RuntimeInfoHook'),
@@ -323,6 +314,7 @@ default_hooks = dict(
     param_scheduler=dict(type='ParamSchedulerHook'),
     logger=dict(type='LoggerHook', interval=log_interval, log_metric_by_epoch=by_epoch, interval_exp_name=1000),
     checkpoint=dict(type='CheckpointHook', interval=interval, by_epoch=by_epoch))
+
 custom_hooks = [
     dict(
         type='CheckpointUploader',
@@ -344,6 +336,20 @@ visualizer = dict(
         dict(type='TensorboardVisBackend')
     ]
 )
+
+optimizer = dict(
+    type='AdamW',
+    lr=3e-4,
+    weight_decay=0.01
+    # paramwise_cfg=dict(
+    #     custom_keys={
+    #         'img_backbone': dict(lr_mult=0.1),
+    #     }),
+)
+
+auto_scale_lr = dict(base_batch_size=16, enable=False)
+optim_wrapper = dict(type='OptimWrapper', optimizer=optimizer)
+param_scheduler = dict(type='MultiStepLR', milestones=[1, 2])
 
 # learning policy
 lr_config = dict(

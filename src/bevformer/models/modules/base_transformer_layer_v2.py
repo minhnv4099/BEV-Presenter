@@ -28,9 +28,6 @@ try:
             'to ``from mmcv.ops.multi_scale_deform_attn import MultiScaleDeformableAttention`` '  # noqa E501
         ))
 except ImportError:
-    # warnings.warn('Fail to import ``MultiScaleDeformableAttention`` from '
-    #               '``mmcv.ops.multi_scale_deform_attn``, '
-    #               'You should install ``mmcv-full`` if you need this module. ')
     pass
 
 

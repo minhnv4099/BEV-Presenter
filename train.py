@@ -15,6 +15,11 @@ from os import path as osp
 import torch
 from mmengine.config import Config, DictAction
 from src.runner import Runner
+from src.utils.env import find_load_env
+from src.utils.logging import getLogger
+
+find_load_env()
+logger = getLogger(name="trainer")
 
 DEFAULT_CONFIG = "configs/bevformer_tiny_test.py"
 WORK_DIR = "experiment"
@@ -22,6 +27,9 @@ WORK_DIR = "experiment"
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
+    parser.add_argument(
+        '--debug',
+        action='store_true')
     parser.add_argument(
         '--config',
         help='config file path, locate in ./configs/',
@@ -33,10 +41,11 @@ def parse_args():
     parser.add_argument(
         '--resume',
         action='store_true',
+        default=False,
         help='Whether to resume training. Defaults to False. If '
              '``resume`` is True and ``load_from`` is None, automatically to'
              'find latest checkpoint from ``work_dir``. '
-             'If not found, resuming, try resume checkpoint from hub')
+             'If not found, resuming, try resume checkpoint from hub.')
     parser.add_argument(
         '--load_from',
         default=None,
@@ -109,6 +118,14 @@ def parse_args():
 def main():
     args = parse_args()
 
+    if args.debug:
+        args.config = DEFAULT_CONFIG
+    else:
+        logger.warning(
+            "It's highly recommended to resume config file from experiment dir"
+            " to continue training with consistent configs/hyperparameters."
+        )
+
     if not args.config:
         try:
             config_file = f"{args.work_dir}/{args.experiment_name}/*.py"
@@ -138,6 +155,11 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
 
+    if args.gpu_ids is not None:
+        cfg.gpu_ids = args.gpu_ids
+    else:
+        cfg.gpu_ids = range(1) if args.gpus is None else range(args.gpus)
+
     # work_dir is determined in this priority: CLI > segment in file > filename
     if args.work_dir is not None:
         # update configs according to CLI args if args.work_dir is not None
@@ -146,11 +168,6 @@ def main():
         # use config filename as default work_dir if cfg.work_dir is None
         cfg.work_dir = osp.join(
             './work_dirs', osp.splitext(osp.basename(args.config))[0])
-
-    if args.gpu_ids is not None:
-        cfg.gpu_ids = args.gpu_ids
-    else:
-        cfg.gpu_ids = range(1) if args.gpus is None else range(args.gpus)
 
     if args.autoscale_lr:
         # apply the linear scaling rule (https://arxiv.org/abs/1706.02677)
@@ -161,12 +178,20 @@ def main():
     cfg.load_from = args.load_from
     cfg.experiment_name = args.experiment_name
 
+    # Modify config before instantiating runner
+    for metric in cfg.val_evaluator.metrics:
+        if args.mode == 'train':
+            metric['plot_every_run'] = True
+        elif args.mode == 'val':
+            metric['plot_every_run'] = False
+
     runner = Runner.from_cfg(cfg)
+
     if args.mode == 'train':
         runner.train()
     elif args.mode == 'val':
         runner.val()
-    else:
+    elif args.mode == 'predict':
         runner.test()
 
 

@@ -161,7 +161,19 @@ def default_collate(data_batch: Sequence) -> Any:
 
 
 @FUNCTIONS.register_module()
-def train_collate(data_batch: Sequence):
+def train_collate(data_batch: Sequence[dict]):
+    """Collate function for train dataloader.
+
+    Args:
+        data_batch (Sequence[dict]): List of `bs` of data dict.
+    Returns:
+        Dict: Dict with keys, value of each is a list of `bs`:
+
+            - img
+            - img_metas
+            - gt_bboxes_3d
+            - gt_labels_3d
+    """
     img = []
     img_metas = []
     gt_bboxes_3d = []
@@ -182,13 +194,18 @@ def train_collate(data_batch: Sequence):
 
 
 @FUNCTIONS.register_module()
-def test_collate(data_batch: Sequence):
+def test_collate(data_batch: Sequence[dict]):
     """Collate batch of test data
 
     Args:
         data_batch (Sequence[dict]):
             Batch of `bs` of `n_aug` of `n_queue`.
+    Returns:
+        Dict: Dict with keys, each value is a batch of `n_aug` of
+        `bs` of the first element in queue.
 
+            - img
+            - img_metas
     """
     imgs = []
     img_metas = []
@@ -198,11 +215,11 @@ def test_collate(data_batch: Sequence):
         img_meta = []
         for sample in data_batch:
             # get only first element in queue
-            # TODO: to able to run
+            # TODO: change when change forward test
             img.append(sample['img'][i][0])
             img_meta.append(sample['img_metas'][i][0])
 
-        imgs.append(torch.stack(img, dim=0))
+        imgs.append(torch.stack(img, dim=0).to(get_device()))
         img_metas.append(img_meta)
 
     return {

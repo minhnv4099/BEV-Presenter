@@ -367,7 +367,7 @@ class ValLoop(BaseLoop):
         self.fp16 = fp16
         if max_iters == -1:
             self.max_iters = len(self.dataloader)
-            assert self.max_iters * len(self.dataloader.batch_size) == len(self.dataloader.dataset)
+            assert self.max_iters * self.dataloader.batch_size == len(self.dataloader.dataset)
         else:
             self.max_iters = max_iters
 
@@ -425,7 +425,8 @@ class TestLoop(BaseLoop):
                  runner: 'Runner',
                  dataloader: Union[DataLoader, Dict],
                  evaluator: Union[Evaluator, Dict, List],
-                 fp16: bool = False):
+                 fp16: bool = False,
+                 max_iters: int = -1):
         super().__init__(runner, dataloader)
 
         if isinstance(evaluator, dict) or isinstance(evaluator, list):
@@ -444,6 +445,11 @@ class TestLoop(BaseLoop):
                 logger='current',
                 level=logging.WARNING)
         self.fp16 = fp16
+        if max_iters == -1:
+            self.max_iters = len(self.dataloader)
+            assert self.max_iters * self.dataloader.batch_size == len(self.dataloader.dataset)
+        else:
+            self.max_iters = max_iters
 
     def run(self) -> dict:
         """Launch test."""
@@ -451,10 +457,12 @@ class TestLoop(BaseLoop):
         self.runner.call_hook('before_test_epoch')
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
+            if idx + 1 > self.max_iters:
+                break
             self.run_iter(idx, data_batch)
 
         # compute metrics
-        metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+        metrics = self.evaluator.evaluate(self.max_iters * self.dataloader.batch_size)
         self.runner.call_hook('after_test_epoch', metrics=metrics)
         self.runner.call_hook('after_test')
         return metrics

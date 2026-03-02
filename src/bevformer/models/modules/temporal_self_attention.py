@@ -11,6 +11,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from mmengine.model import BaseModule, constant_init, xavier_init
+from src.device import get_device
 from src.bevformer.transformers.attentions import multi_scale_deformable_attn_pytorch
 from src.utils.logging import getLogger
 from src.utils.telemetry import timing
@@ -100,18 +101,16 @@ class TemporalSelfAttention(BaseModule):
 
         # linear projection to compute offset
         self.sampling_offsets = nn.Linear(
-            in_features=embed_dims*self.num_bev_queue,
-            out_features=num_bev_queue * num_heads * num_levels * num_points * 2
-        )
+            in_features=embed_dims * self.num_bev_queue,
+            out_features=num_bev_queue * num_heads * num_levels * num_points * 2)
         # linear projection to computer attention weights instead of
         # dot product between query and key
         # because key is dynamic
         self.attention_weights = nn.Linear(
-            in_features=embed_dims*self.num_bev_queue,
-            out_features=num_bev_queue * num_heads * num_levels * num_points
-        )
-        # query use to compute offset only
-        # no for attention computing, so no need
+            in_features=embed_dims * self.num_bev_queue,
+            out_features=num_bev_queue * num_heads * num_levels * num_points)
+        # query is used to compute offset only
+        # no for attention computing, so no need query_proj
         self.value_proj = nn.Linear(embed_dims, embed_dims)
         self.output_proj = nn.Linear(embed_dims, embed_dims)
         self.dropout = nn.Dropout(dropout_p)  # type: ignore
@@ -123,6 +122,7 @@ class TemporalSelfAttention(BaseModule):
         constant_init(self.sampling_offsets, 0.)
         thetas = torch.arange(
             self.num_heads,
+            device=get_device(),
             dtype=torch.float32) * (2.0 * math.pi / self.num_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
         grid_init = (grid_init /
@@ -188,12 +188,12 @@ class TemporalSelfAttention(BaseModule):
                 as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
 
         Returns:
-             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+             Tensor: forwarded results with shape `[num_query, bs, embed_dims]`.
         """
-        if value is None:
-            assert self.batch_first
-            bs, num_query, c = query.shape
-            value = torch.stack([query, query], 1).reshape(bs*2, num_query, c)
+        # if value is None:
+        #     assert self.batch_first
+        #     bs, num_query, c = query.shape
+        #     value = torch.stack([query, query], 1).reshape(bs*2, num_query, c)
 
         if identity is None:
             identity = query
@@ -222,7 +222,7 @@ class TemporalSelfAttention(BaseModule):
         # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points * 2)
         # (bs, num_query, num_heads, num_bev_queue, num_levels, num_points, 2)
         sampling_offsets = self.sampling_offsets(query).view(
-            bs, num_query, self.num_heads,  self.num_bev_queue, self.num_levels, self.num_points, 2)
+            bs, num_query, self.num_heads, self.num_bev_queue, self.num_levels, self.num_points, 2)
 
         # (bs, num_query, num_bev_queue * num_heads * num_levels * num_points)
         # (bs, num_query, num_heads, num_bev_queue, num_levels * num_points)
@@ -293,6 +293,7 @@ class TemporalSelfAttention(BaseModule):
         output = self.output_proj(output)
 
         if not self.batch_first:
+            # change back (, bs, ...) as input
             output = output.permute(1, 0, 2)
 
         return self.dropout(output) + identity

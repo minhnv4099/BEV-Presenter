@@ -54,7 +54,7 @@ def getLogger(
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    logger = MMLogger(name=__name__)
+    logger = MMLogger.get_instance(name=name, logger_name=name)
 
     return logger
 
@@ -210,7 +210,7 @@ class MMLogger(Logger, ManagerMixin):
     Args:
         name (str): Global instance name.
         logger_name (str): ``name`` attribute of ``Logging.Logger`` instance.
-            If `logger_name` is not defined, defaults to 'mmengine'.
+            If `logger_name` is not defined, defaults to 'bevformer'.
         log_file (str, optional): The log filename. If specified, a
             ``FileHandler`` will be added to the logger. Defaults to None.
         log_level (str): The log level of the handler. Defaults to
@@ -241,7 +241,7 @@ class MMLogger(Logger, ManagerMixin):
         # `StreamHandler` record month, day, hour, minute, and second
         # timestamp.
         stream_handler.setFormatter(
-            MyFormatter(color=True, datefmt='%m/%d %H:%M:%S'))
+            MyFormatter(color=True, datefmt='%m/%d/%y %H:%M:%S'))
         # Only rank0 `StreamHandler` will log messages below error level.
         if global_rank == 0:
             stream_handler.setLevel(log_level)

@@ -84,6 +84,7 @@ def is_npu_support_full_precision() -> bool:
 
 
 DEVICE = 'cpu'
+CPU = 'cpu'
 if is_npu_available():
     DEVICE = 'npu'
 elif is_cuda_available():
@@ -102,4 +103,4 @@ def get_device() -> str:
     Returns:
         str: cuda | npu | mlu | mps | cpu.
     """
-    return 'cpu'
+    return CPU

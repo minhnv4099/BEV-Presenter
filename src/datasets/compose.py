@@ -1,8 +1,13 @@
+#
+#  Copyright (c) 2026
+#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
+#
 from typing import Callable, List, Optional, Sequence, Union, TYPE_CHECKING
 from src.bevformer.builder import build_compose_component
 from src.utils.logging import getLogger
+
 if TYPE_CHECKING:
-    from src.datasets.pipelines import BaseTransform
+    from src.datasets.transforms import BaseTransform
 
 logger = getLogger(__name__)
 

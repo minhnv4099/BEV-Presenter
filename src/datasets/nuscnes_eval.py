@@ -5,17 +5,16 @@ import argparse
 import os
 import random
 import time
-from typing import Tuple, Dict, Any
 import json
-from typing import Any
+from typing import Any, Optional, Dict, Tuple
 
 import numpy as np
 from matplotlib import pyplot as plt
-
+from src.utils.logging import getLogger
 
 from nuscenes import NuScenes
 from nuscenes.eval.common.config import config_factory
-from nuscenes.eval.common.loaders import load_prediction, load_gt, add_center_dist, filter_eval_boxes
+from nuscenes.eval.common.loaders import add_center_dist, filter_eval_boxes
 from nuscenes.eval.common.utils import Quaternion
 from nuscenes.eval.common.data_classes import EvalBoxes
 from nuscenes.eval.common.render import setup_axis
@@ -33,7 +32,7 @@ from nuscenes.eval.tracking.data_classes import TrackingBox
 from nuscenes.utils.data_classes import Box
 from nuscenes.utils.splits import create_splits_scenes
 
-
+logger = getLogger(__name__)
 Axis = Any
 
 
@@ -203,6 +202,38 @@ def exist_corners_in_image_but_not_all(box, intrinsic: np.ndarray, imsize: Tuple
         return False
 
 
+def load_prediction(result_path: str, max_boxes_per_sample: int, box_cls, verbose: bool = False) \
+        -> Tuple[EvalBoxes, Dict]:
+    """
+    Loads object predictions from file.
+    :param result_path: Path to the .json result file provided by the user.
+    :param max_boxes_per_sample: Maximim number of boxes allowed per sample.
+    :param box_cls: Type of box to load, e.g. DetectionBox or TrackingBox.
+    :param verbose: Whether to print messages to stdout.
+    :return: The deserialized results and meta data.
+    """
+
+    # Load from file and check that the format is correct.
+    with open(result_path) as f:
+        data = json.load(f)
+    assert 'results' in data, 'Error: No field `results` in result file. Please note that the result format changed.' \
+                              'See https://www.nuscenes.org/object-detection for more information.'
+
+    # Deserialize results and get meta data.
+    all_results = EvalBoxes.deserialize(data['results'], box_cls)
+    meta = data['meta']
+    if verbose:
+        print("Loaded results from {}. Found detections for {} samples."
+              .format(result_path, len(all_results.sample_tokens)))
+
+    # Check that each sample has no more than x predicted boxes.
+    for sample_token in all_results.sample_tokens:
+        assert len(all_results.boxes[sample_token]) <= max_boxes_per_sample, \
+            "Error: Only <= %d boxes per sample allowed!" % max_boxes_per_sample
+
+    return all_results, meta
+
+
 def load_gt(nusc: NuScenes, eval_split: str, box_cls, verbose: bool = False):
     """
     Loads ground truth boxes from DB.
@@ -247,6 +278,7 @@ def load_gt(nusc: NuScenes, eval_split: str, box_cls, verbose: bool = False):
             'Error: You are trying to evaluate on the test set but you do not have the annotations!'
     index_map = {}
     for scene in nusc.scene:
+
         first_sample_token = scene['first_sample_token']
         sample = nusc.get('sample', first_sample_token)
         index_map[first_sample_token] = 1
@@ -480,8 +512,7 @@ class CustomNuScenesEval(NuScenesEval):
                  verbose: bool = True,
                  overlap_test=False,
                  eval_mask=False,
-                 data_infos=None
-                 ):
+                 data_infos=None):
         """
         Initialize a DetectionEval object.
         :param nusc: A NuScenes object.
@@ -563,6 +594,7 @@ class CustomNuScenesEval(NuScenesEval):
 
     def main(self,
              plot_examples: int = 0,
+             suffix: Optional[str] = None,
              render_curves: bool = True) -> Dict[str, Any]:
         """
         Main function that loads the evaluation code, visualizes samples, runs the evaluation and renders stat plots.
@@ -578,18 +610,25 @@ class CustomNuScenesEval(NuScenesEval):
             sample_tokens = sample_tokens[:plot_examples]
 
             # Visualize samples.
-            example_dir = os.path.join(self.output_dir, 'examples')
+            if not suffix:
+                example_dir = os.path.join(self.output_dir, 'examples')
+            else:
+                example_dir = os.path.join(self.output_dir, 'examples', suffix)
+
             if not os.path.isdir(example_dir):
-                os.mkdir(example_dir)
+                os.makedirs(example_dir, exist_ok=True)
+
             for sample_token in sample_tokens:
                 visualize_sample(self.nusc,
                                  sample_token,
                                  self.gt_boxes if self.eval_set != 'test' else EvalBoxes(),
                                  # Don't render test GT.
                                  self.pred_boxes,
-                                 conf_th=0.0,
+                                 conf_th=0.15,
                                  eval_range=max(self.cfg.class_range.values()),
                                  savepath=os.path.join(example_dir, '{}.png'.format(sample_token)))
+
+            logger.info(f"Examples are visualized in {example_dir!r}.")
 
         # Run evaluation.
         metrics, metric_data_list = self.evaluate()

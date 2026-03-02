@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import warnings
 
+from typing import Union
 import torch.nn as nn
 import torch.utils.checkpoint as cp
 from mmcv.cnn import build_plugin_layer
@@ -31,15 +34,15 @@ class ResLayer(nn.Sequential):
     """
 
     def __init__(self,
-                 block,
-                 inplanes,
-                 planes,
-                 num_blocks,
-                 stride=1,
-                 avg_down=False,
-                 conv_cfg=None,
-                 norm_cfg=dict(type='BN'),
-                 downsample_first=True,
+                 block: Union[SimplifiedBasicBlock, BasicBlock, Bottleneck],
+                 inplanes: int,
+                 planes: int,
+                 num_blocks: int,
+                 stride: int = 1,
+                 avg_down: bool = False,
+                 conv_cfg: dict = None,
+                 norm_cfg: dict = dict(type='BN'),
+                 downsample_first: bool = True,
                  **kwargs):
         self.block = block
 
@@ -535,7 +538,7 @@ class ResNet(BaseModule):
         >>> self = ResNet(depth=18)
         >>> self.eval()
         >>> inputs = torch.rand(1, 3, 32, 32)
-        >>> level_outputs = self.forward(inputs)
+        >>> level_outputs = self.forward(inputs,,
         >>> for level_out in level_outputs:
         ...     print(tuple(level_out.shape))
         (1, 64, 8, 8)

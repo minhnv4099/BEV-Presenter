@@ -1,3 +1,9 @@
+#
+#  Copyright (c) 2026
+#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
+#
+
+from typing import Any, Dict
 import numpy as np
 
 from mmengine.fileio import FileClient
@@ -99,35 +105,37 @@ class LoadAnnotations3D(BaseTransform, LoadAnnotations):
     """
 
     def __init__(self,
-                 with_bbox_3d=True,
-                 with_label_3d=True,
-                 with_mask_3d=False,
-                 with_seg_3d=False,
-                 with_bbox=False,
-                 with_label=False,
-                 with_mask=False,
-                 with_seg=False,
-                 with_attr_label=False,
-                 poly2mask=True,
+                 with_bbox_3d: bool = True,
+                 with_label_3d: bool = True,
+                 with_mask_3d: bool = False,
+                 with_seg_3d: bool = False,
+                 with_bbox: bool = False,
+                 with_label: bool = False,
+                 with_mask: bool = False,
+                 with_seg: bool = False,
+                 with_attr_label: bool = False,
+                 poly2mask: bool = True,
                  file_client_args=dict(backend='disk')):
-        super().__init__(
-            with_bbox,
-            with_label,
-            with_mask,
-            with_seg,
-            poly2mask,
+        LoadAnnotations.__init__(
+            self,
+            with_bbox=with_bbox,
+            with_label=with_label,
+            with_keypoints=with_mask,
+            with_seg=with_seg,
             file_client_args=file_client_args)
-        self.with_attr_label = with_attr_label
+
         self.with_bbox_3d = with_bbox_3d
         self.with_label_3d = with_label_3d
         self.with_mask_3d = with_mask_3d
         self.with_seg_3d = with_seg_3d
+        self.with_attr_label = with_attr_label
+        self.poly2mask = poly2mask
 
-    def _load_bboxes_3d(self, results):
+    def _load_bboxes_3d(self, results: Dict[str, Any]):
         """Private function to load 3D bounding box annotations.
 
         Args:
-            results (dict): Result dict from :obj:`mmdet3d.CustomDataset`.
+            results (dict): Result dict.
 
         Returns:
             dict: The dict containing loaded 3D bounding box annotations.
@@ -136,7 +144,7 @@ class LoadAnnotations3D(BaseTransform, LoadAnnotations):
         # results['bbox3d_fields'].append('gt_bboxes_3d')
         return results
 
-    def _load_labels_3d(self, results):
+    def _load_labels_3d(self, results: Dict[str, Any]):
         """Private function to load label annotations.
 
         Args:
@@ -148,7 +156,7 @@ class LoadAnnotations3D(BaseTransform, LoadAnnotations):
         results['gt_labels_3d'] = results['ann_info']['gt_labels_3d']
         return results
 
-    def _load_masks_3d(self, results):
+    def _load_masks_3d(self, results: Dict[str, Any]):
         """Private function to load 3D mask annotations.
 
         Args:
@@ -173,7 +181,7 @@ class LoadAnnotations3D(BaseTransform, LoadAnnotations):
         results['pts_mask_fields'].append('pts_instance_mask')
         return results
 
-    def _load_semantic_seg_3d(self, results):
+    def _load_semantic_seg_3d(self, results: Dict[str, Any]):
         """Private function to load 3D semantic segmentation annotations.
 
         Args:
@@ -199,7 +207,7 @@ class LoadAnnotations3D(BaseTransform, LoadAnnotations):
         results['pts_seg_fields'].append('pts_semantic_mask')
         return results
 
-    def transform(self, results):
+    def transform(self, results: Dict[str, Any]):
         """Call function to load multiple types annotations.
 
         Args:

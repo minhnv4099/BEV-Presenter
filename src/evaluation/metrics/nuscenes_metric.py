@@ -1,4 +1,7 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+#
+#  Copyright (c) 2026
+#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
+#
 import tempfile
 from os import path as osp
 from typing import Dict, List, Optional, Sequence, Tuple, Union
@@ -17,106 +20,8 @@ from nuscenes.utils.data_classes import Box as NuScenesBox
 from src.utils.fileio import dump
 from src.registry import METRICS
 from src.structures import CameraInstance3DBoxes, LiDARInstance3DBoxes, xywhr2xyxyr
-
-
-def to_tensor(data: list):
-    return torch.as_tensor(np.array(data))
-
-
-# TODO delete this
-def bbox3d2result(bboxes, scores, labels, attrs=None):
-    """Convert detection results to a list of numpy arrays.
-
-    Args:
-        bboxes (torch.Tensor): Bounding boxes with shape (N, 5).
-        labels (torch.Tensor): Labels with shape (N, ).
-        scores (torch.Tensor): Scores with shape (N, ).
-        attrs (torch.Tensor, optional): Attributes with shape (N, ).
-            Defaults to None.
-
-    Returns:
-        dict[str, torch.Tensor]: Bounding box results in cpu mode.
-
-            - boxes_3d (torch.Tensor): 3D boxes.
-            - scores (torch.Tensor): Prediction scores.
-            - labels_3d (torch.Tensor): Box labels.
-            - attrs_3d (torch.Tensor, optional): Box attributes.
-    """
-    result_dict = dict(
-        bboxes_3d=bboxes.to('cpu'),
-        scores_3d=scores.cpu(),
-        labels_3d=labels.cpu())
-
-    if attrs is not None:
-        result_dict['attr_labels'] = attrs.cpu()
-
-    return result_dict
-
-
-def box3d_multiclass_nms(boxes3d, boxes_for_nms, scores, score_thr, max_per_frame, nms_cfg, mlvl_attr_scores=None):
-    """
-    boxes3d: (N, 7) - predicted boxes
-    boxes_for_nms: (N, 7) - boxes projected for NMS (BEV)
-    scores: (N,) - confidence scores
-    score_thr: float - min score to keep
-    max_per_frame: int - max boxes to keep per frame
-    mlvl_attr_scores: (N, K) optional attribute scores
-    """
-
-    # 1️⃣ filter by score threshold
-    keep = scores >= score_thr
-    boxes3d = boxes3d[keep]
-    boxes_for_nms = boxes_for_nms[keep]
-    scores = scores[keep]
-    if mlvl_attr_scores is not None:
-        mlvl_attr_scores = mlvl_attr_scores[keep]
-
-    # 2️⃣ simple BEV IoU computation for NMS
-    # BEV: use x, y, w, l
-    # note: for demo, we use a simple IoU function for rectangles
-    def iou_bev(box_a, box_b):
-        # box = (x, y, w, l)
-        xa, ya, wa, la = box_a
-        xb, yb, wb, lb = box_b
-        # compute intersection
-        x1 = max(xa - wa/2, xb - wb/2)
-        y1 = max(ya - la/2, yb - lb/2)
-        x2 = min(xa + wa/2, xb + wb/2)
-        y2 = min(ya + la/2, yb + lb/2)
-        inter_area = max(0, x2 - x1) * max(0, y2 - y1)
-        area_a = wa * la
-        area_b = wb * lb
-        return inter_area / (area_a + area_b - inter_area + 1e-6)
-
-    # 3️⃣ sort by scores descending
-    order = scores.argsort(descending=True)
-    boxes3d = boxes3d[order]
-    boxes_for_nms = boxes_for_nms[order]
-    scores = scores[order]
-    if mlvl_attr_scores is not None:
-        mlvl_attr_scores = mlvl_attr_scores[order]
-
-    keep_idx = []
-    for i in range(len(boxes_for_nms)):
-        keep_flag = True
-        for j in keep_idx:
-            if iou_bev(boxes_for_nms[i][:4], boxes_for_nms[j][:4]) > nms_cfg.get("iou_thr", 0.01):
-                keep_flag = False
-                break
-        if keep_flag:
-            keep_idx.append(i)
-        if len(keep_idx) >= max_per_frame:
-            break
-
-    boxes3d = boxes3d[keep_idx]
-    scores = scores[keep_idx]
-    labels = torch.zeros(len(keep_idx), dtype=torch.int64)  # giả định class 0 nếu multiclass chưa implement
-    if mlvl_attr_scores is not None:
-        attrs = mlvl_attr_scores[keep_idx]
-    else:
-        attrs = None
-
-    return boxes3d, scores, labels, attrs
+from src.utils.bbox import bbox3d2result, box3d_multiclass_nms
+from src.utils.tensor import to_tensor
 
 
 @METRICS.register_module()
@@ -198,7 +103,8 @@ class NuScenesMetric(BaseMetric):
                  collect_device: str = 'cpu',
                  backend_args: Optional[dict] = None,
                  classes: Optional[list[str]] = None,
-                 plot_examples: int = 1):
+                 plot_examples: int = 1,
+                 plot_every_run: bool = False):
         self.default_prefix = 'NuScenes metric'
         super(NuScenesMetric, self).__init__(
             collect_device=collect_device, prefix=prefix)
@@ -227,6 +133,8 @@ class NuScenesMetric(BaseMetric):
 
         self.classes = classes
         self.plot_examples = plot_examples
+        self.plot_every_run = plot_every_run
+        self._iter_runs = 1
 
     def process(self, data_batch: dict, data_samples: Sequence[dict]) -> None:
         """Process one batch of data samples and predictions.
@@ -290,9 +198,11 @@ class NuScenesMetric(BaseMetric):
                 result_dict, classes=self.classes, metric=metric, logger=logger)
             for result in ap_dict:
                 metric_dict[result] = ap_dict[result]
+        self._iter_runs += 1
 
         if tmp_dir is not None:
             tmp_dir.cleanup()
+
         return metric_dict
 
     def nus_evaluate(self,
@@ -344,6 +254,7 @@ class NuScenesMetric(BaseMetric):
         from src.datasets.nuscnes_eval import CustomNuScenesEval
 
         output_dir = osp.join(*osp.split(result_path)[:-1])
+
         nusc = CustomNuScenes(
             version=self.version, dataroot=self.data_root, verbose=False)
         eval_set_map = {
@@ -357,7 +268,15 @@ class NuScenesMetric(BaseMetric):
             eval_set=eval_set_map[self.version],
             output_dir=output_dir,
             verbose=False)
-        nusc_eval.main(render_curves=True, plot_examples=self.plot_examples)
+
+        suffix = None
+        if self.plot_every_run:
+            suffix = f"eval_{self._iter_runs}"
+
+        nusc_eval.main(
+            render_curves=True,
+            plot_examples=self.plot_examples,
+            suffix=suffix)
 
         # record metrics
         metrics = mmengine.load(osp.join(output_dir, 'metrics_summary.json'))
@@ -445,7 +364,7 @@ class NuScenesMetric(BaseMetric):
         AttrMapping_rev2 = [
             'cycle.with_rider', 'cycle.without_rider', 'pedestrian.moving',
             'pedestrian.standing', 'pedestrian.sitting_lying_down',
-            'vehicle.moving', 'vehicle.parked', 'vehicle.stopped', 'None'
+            'vehicle.moving', 'vehicle.parked', 'vehicle.stopped', 'None', 'None'
         ]
         if label_name == 'car' or label_name == 'bus' \
             or label_name == 'truck' or label_name == 'trailer' \
@@ -535,6 +454,7 @@ class NuScenesMetric(BaseMetric):
                                            boxes_per_frame,
                                            classes,
                                            self.eval_detection_configs)
+
             cam_boxes3d, scores, labels = nusc_box_to_cam_box3d(boxes)
             # box nms 3d over 6 images in a frame
             # TODO: move this global setting into config
@@ -563,7 +483,8 @@ class NuScenesMetric(BaseMetric):
             det = bbox3d2result(cam_boxes3d, scores, labels, attrs)
             boxes, attrs = output_to_nusc_box(det)
             boxes, attrs = cam_nusc_box_to_global(
-                self.data_infos[sample_idx], boxes, attrs, classes,
+                self.data_infos[sample_idx],
+                boxes, attrs, classes,
                 self.eval_detection_configs)
 
             for i, box in enumerate(boxes):
@@ -580,10 +501,7 @@ class NuScenesMetric(BaseMetric):
                     attribute_name=attr)
                 annos.append(nusc_anno)
             # other views results of the same frame should be concatenated
-            if sample_token in nusc_annos:
-                nusc_annos[sample_token].extend(annos)
-            else:
-                nusc_annos[sample_token] = annos
+            nusc_annos[sample_token] = annos
 
         nusc_submissions = {
             'meta': self.modality,
@@ -705,10 +623,10 @@ def output_to_nusc_box(
         for i in range(len(bbox3d)):
             quat = pyquaternion.Quaternion(axis=[0, 0, 1], radians=box_yaw[i])
             velocity = (*bbox3d.tensor[i, 7:9], 0.0)
-            # velo_val = np.linalg.norm(box3d[i, 7:9])
-            # velo_ori = box3d[i, 6]
-            # velocity = (
-            # velo_val * np.cos(velo_ori), velo_val * np.sin(velo_ori), 0.0)
+            velo_val = np.linalg.norm(bbox3d[i, 7:9])
+            velo_ori = bbox3d[i, 6:7]
+            velocity = velo_val * np.cos(velo_ori), velo_val * np.sin(velo_ori), 0.0
+
             box = NuScenesBox(
                 box_gravity_center[i],
                 nus_box_dims[i],
@@ -819,11 +737,11 @@ def cam_nusc_box_to_global(
         box.translate(cam2ego_t)
 
         # filter det in ego.
-        # cls_range_map = eval_configs.class_range
-        # radius = np.linalg.norm(box.center[:2], 2)
-        # det_range = cls_range_map[classes[box.label]]
-        # if radius > det_range:
-        #     continue
+        cls_range_map = eval_configs.class_range
+        radius = np.linalg.norm(box.center[:2], 2)
+        det_range = cls_range_map[classes[box.label]]
+        if radius > det_range:
+            continue
         # Move box to global coord system
         ego2global_r = np.array(info['ego2global_rotation'])
         box.rotate(
@@ -862,11 +780,11 @@ def global_nusc_box_to_cam(info: dict, boxes: List[NuScenesBox],
             pyquaternion.Quaternion(ego2global_r, rtol=1e-05,
                                     atol=1e-07).inverse)
         # filter det in ego.
-        # cls_range_map = eval_configs.class_range
-        # radius = np.linalg.norm(box.center[:2], 2)
-        # det_range = cls_range_map[classes[box.label]]
-        # if radius > det_range:
-        #     continue
+        cls_range_map = eval_configs.class_range
+        radius = np.linalg.norm(box.center[:2], 2)
+        det_range = cls_range_map[classes[box.label]]
+        if radius > det_range:
+            continue
         # Move box to camera coord system
         cam2ego_t = np.array(info['cams']['CAM_FRONT']['sensor2ego_translation'])
         box.translate(-cam2ego_t)

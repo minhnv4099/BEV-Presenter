@@ -204,7 +204,7 @@ class BEVFormerHead(DETRHead):
         )
 
         bev_embed, hs, init_reference, inter_references = outputs
-
+        # (n_dec_layer, bs, n_query, emb_dims)
         hs = hs.permute(0, 2, 1, 3)
         outputs_classes = []
         outputs_coords = []
