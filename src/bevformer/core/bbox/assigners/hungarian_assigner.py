@@ -11,7 +11,7 @@ import torch
 from .assign_result import AssignResult
 from .base import BaseAssigner
 from src.registry import ASSIGNERS
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.bevformer.core.bbox.match_costs import build_match_cost
 
 

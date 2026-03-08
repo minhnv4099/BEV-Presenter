@@ -2,7 +2,7 @@ from .hungarian_assigner_3d import HungarianAssigner3D
 from .hungarian_assigner import HungarianAssigner
 from .base import BaseAssigner
 from src.registry import ASSIGNERS
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.bevformer.builder import _build_with_fallback
 
 

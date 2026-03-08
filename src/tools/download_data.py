@@ -99,8 +99,8 @@ def main(args: Namespace):
         cache_dir=args.cache_dir,
         token=args.token
     )
-    safe_extract(tar=data_path, out_dir=flag_out_dir)
-    logger.info(f"Nuscenes data is saved in {data_path!r}.")
+    safe_extract(tar=data_path, out_dir=osp.join(flag_out_dir, args.version))
+    logger.info(f"Nuscenes data is saved in {osp.join(flag_out_dir, args.version)!r}.")
 
     data_path = hfapi.hf_hub_download(
         repo_id=args.repo,
@@ -111,7 +111,7 @@ def main(args: Namespace):
         token=args.token
     )
     safe_extract(tar=data_path, out_dir=flag_out_dir)
-    logger.info(f"Can bus data is saved in {data_path!r}.")
+    logger.info(f"Can bus data is saved in {flag_out_dir!r}.")
 
 
 if __name__ == "__main__":

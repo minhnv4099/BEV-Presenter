@@ -14,7 +14,7 @@ from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
 from src.modeling_output import BaseModelOutput
 from src.utils.telemetry import timing
 from src.bevformer.models.utils.bricks import build_transformer_layer
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from .base_attention import BaseAttention, BaseFeedForward
 from .interpolation import InterpolateMidPositionEmbeddings
 

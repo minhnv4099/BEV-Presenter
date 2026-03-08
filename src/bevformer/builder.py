@@ -6,7 +6,7 @@ import traceback
 import warnings
 from typing import Optional
 
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.utils.logging import getLogger
 
 from src.registry import (

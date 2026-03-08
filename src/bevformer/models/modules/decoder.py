@@ -9,7 +9,7 @@ from torch import Tensor
 from typing import Optional, Sequence
 import torch.nn as nn
 
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.bevformer.transformers.layers import TransformerLayerSequence
 from src.bevformer.models.modules.base_transformer_layer_v2 import CustomBaseTransformerLayer
 from src.registry import TRANSFORMER_BLOCKS, TRANSFORMER_LAYERS

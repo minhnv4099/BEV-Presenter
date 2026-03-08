@@ -11,7 +11,7 @@ from mmengine.model import BaseModule
 from mmcv.cnn import Linear
 from mmcv.cnn.bricks.transformer import FFN
 
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.utils.logging import getLogger
 from src.registry import HEADS, BBOX_SAMPLERS
 from src.bevformer.models.utils.bricks import build_transformer

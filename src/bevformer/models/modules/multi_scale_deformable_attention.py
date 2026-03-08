@@ -18,7 +18,7 @@ from src.bevformer.transformers.attentions import multi_scale_deformable_attn_py
 from src.registry import ATTENTIONS
 from src.device import get_device
 from src.utils.logging import getLogger
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 
 logger = getLogger(__name__)
 

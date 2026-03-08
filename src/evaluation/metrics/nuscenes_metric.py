@@ -22,6 +22,9 @@ from src.registry import METRICS
 from src.structures import CameraInstance3DBoxes, LiDARInstance3DBoxes, xywhr2xyxyr
 from src.utils.bbox import bbox3d2result, box3d_multiclass_nms
 from src.utils.tensor import to_tensor
+from src.utils.logging import getLogger
+
+logger = getLogger(__name__)
 
 
 @METRICS.register_module()
@@ -104,7 +107,8 @@ class NuScenesMetric(BaseMetric):
                  backend_args: Optional[dict] = None,
                  classes: Optional[list[str]] = None,
                  plot_examples: int = 1,
-                 plot_every_run: bool = False):
+                 plot_every_run: bool = False,
+                 get_full_metric: bool = False):
         self.default_prefix = 'NuScenes metric'
         super(NuScenesMetric, self).__init__(
             collect_device=collect_device, prefix=prefix)
@@ -118,6 +122,7 @@ class NuScenesMetric(BaseMetric):
         self.version = version
         self.modality = modality
         self.format_only = format_only
+        self.prefix = None
         if self.format_only:
             assert jsonfile_prefix is not None, 'jsonfile_prefix must be not '
             'None when format_only is True, otherwise the result files will '
@@ -134,6 +139,7 @@ class NuScenesMetric(BaseMetric):
         self.classes = classes
         self.plot_examples = plot_examples
         self.plot_every_run = plot_every_run
+        self.get_full_metric = get_full_metric
         self._iter_runs = 1
 
     def process(self, data_batch: dict, data_samples: Sequence[dict]) -> None:
@@ -281,20 +287,22 @@ class NuScenesMetric(BaseMetric):
         # record metrics
         metrics = mmengine.load(osp.join(output_dir, 'metrics_summary.json'))
         detail = dict()
-        metric_prefix = f'{result_name}_NuScenes'
-        for name in classes:
-            for k, v in metrics['label_aps'][name].items():
-                val = float(f'{v:.4f}')
-                detail[f'{metric_prefix}/{name}_AP_dist_{k}'] = val
-            for k, v in metrics['label_tp_errors'][name].items():
-                val = float(f'{v:.4f}')
-                detail[f'{metric_prefix}/{name}_{k}'] = val
-            for k, v in metrics['tp_errors'].items():
-                val = float(f'{v:.4f}')
-                detail[f'{metric_prefix}/{self.ErrNameMapping[k]}'] = val
 
-        detail[f'{metric_prefix}/NDS'] = metrics['nd_score']
-        detail[f'{metric_prefix}/mAP'] = metrics['mean_ap']
+        metric_prefix = f'{result_name}_NuScenes'
+        if self.get_full_metric:
+            for name in classes:
+                for k, v in metrics['label_aps'][name].items():
+                    val = float(f'{v:.4f}')
+                    detail[f'{metric_prefix}/{name}_AP_dist_{k}'] = val
+                for k, v in metrics['label_tp_errors'][name].items():
+                    val = float(f'{v:.4f}')
+                    detail[f'{metric_prefix}/{name}_{k}'] = val
+                for k, v in metrics['tp_errors'].items():
+                    val = float(f'{v:.4f}')
+                    detail[f'{metric_prefix}/{self.ErrNameMapping[k]}'] = val
+
+        detail[f'NDS'] = metrics['nd_score']
+        detail[f'mAP'] = metrics['mean_ap']
         return detail
 
     def format_results(
@@ -510,7 +518,7 @@ class NuScenesMetric(BaseMetric):
 
         mmengine.mkdir_or_exist(jsonfile_prefix)
         res_path = osp.join(jsonfile_prefix, 'results_nusc.json')
-        print(f'Results writes to {res_path}')
+        logger.info(f'Results writes to {res_path}')
         dump(nusc_submissions, res_path, indent=2)
         return res_path
 
@@ -584,7 +592,7 @@ class NuScenesMetric(BaseMetric):
         }
         mmengine.mkdir_or_exist(jsonfile_prefix)
         res_path = osp.join(jsonfile_prefix, 'results_nusc.json')
-        print(f'Results writes to {res_path}')
+        logger.info(f'Results writes to {res_path}')
         mmengine.dump(nusc_submissions, res_path)
         return res_path
 

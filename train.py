@@ -52,7 +52,7 @@ def parse_args():
         help='The checkpoint file to load from. Defaults to None.')
     parser.add_argument(
         '--mode',
-        default='train',
+        default='val',
         choices=['train', 'val', 'predict'],
         help='Train, test or predict. If mode is val, automatic resume the '
              'checkpoint from `load_from`, so provide it.')

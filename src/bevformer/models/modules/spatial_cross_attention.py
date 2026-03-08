@@ -18,7 +18,7 @@ from ...models.utils.bricks import build_attention
 from src.utils.telemetry import timing
 from src.device import get_device
 from src.registry import ATTENTIONS
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 
 logger = getLogger(__name__)
 

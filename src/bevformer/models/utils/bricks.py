@@ -1,7 +1,7 @@
 import time
 from collections import defaultdict
 import torch
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.utils.logging import getLogger
 from mmcv.cnn.bricks.norm import build_norm_layer
 from src.bevformer.builder import _build_with_fallback

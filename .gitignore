@@ -47,6 +47,8 @@ MANIFEST
 # submodules
 mmcv_clone/
 
+# ignored files
+test_utils.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

@@ -18,7 +18,7 @@ from src.registry import TRANSFORMER_LAYERS, TRANSFORMER_BLOCKS
 from src.device import get_device
 from src.utils.logging import getLogger
 from src.utils.fp16_utils import force_fp32, auto_fp16
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.bevformer.transformers.layers import TransformerLayerSequence
 from .base_transformer_layer_v2 import CustomBaseTransformerLayer
 

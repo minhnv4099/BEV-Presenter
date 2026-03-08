@@ -4,18 +4,19 @@
 #
 from __future__ import annotations
 
-import glob
-import shutil
-import os
+import json
 import os.path as osp
-from typing import Optional, List, Union, TYPE_CHECKING
+import time
+import io
+from contextlib import suppress
+from typing import Optional, Union, TYPE_CHECKING, Dict
 from tempfile import TemporaryDirectory
 from huggingface_hub import HfApi, save_torch_state_dict, HfFileSystem
-from mmengine.runner.checkpoint import find_latest_checkpoint
+
 from .hook import Hook
+from src.runner.utils import find_latest_checkpoint, find_best_checkpoint
 from src.registry import HOOKS
 from src.utils.logging import getLogger
-from contextlib import suppress
 
 if TYPE_CHECKING:
     from src.runner.runner import Runner
@@ -35,15 +36,15 @@ class CheckpointUploader(Hook):
                  token: Optional[str] = None,
                  interval: int = 1,
                  by_epoch: bool = True,
-                 max_keep_ckpts: int = -1,
                  save_last: bool = True,
-                 save_best: Union[str, List[str], None] = None,
                  filename_tmpl: Optional[str] = None,
                  save_begin: int = 0,
                  **kwargs):
         self.hfapi = HfApi(token=token)
         self.hffs = HfFileSystem(token=token)
         self.repo_id = repo_id
+        self.previous_last_ckpt = ''
+        self.previous_best_ckpt = dict()
 
         if '/' in repo_id:
             self.repo_id = f"{repo_id}-{{repo_name}}"
@@ -53,7 +54,6 @@ class CheckpointUploader(Hook):
         self.token = token
         self.interval = interval
         self.by_epoch = by_epoch
-        self.max_keep_ckpts = max_keep_ckpts
         self.save_last = save_last
         self.save_begin = save_begin
         self.args = kwargs
@@ -70,8 +70,11 @@ class CheckpointUploader(Hook):
     def repo_url(self):
         return f"https://huggingface.co/{self.repo_id}"
 
-    def path_format(self, text: str):
-        return f"{self.repo_id}/{text}"
+    def path_format(self, path: str):
+        return f"{self.repo_id}/{path}"
+
+    def before_run(self, runner: Runner) -> None:
+        self.repo_id = self.repo_id.format(repo_name=runner.experiment_name)
 
     def before_train(self, runner: 'Runner') -> None:
         """Finish all operations, related to checkpoint.
@@ -82,31 +85,33 @@ class CheckpointUploader(Hook):
         Args:
             runner (Runner): The runner of the training process.
         """
-        self.repo_id = self.repo_id.format(repo_name=runner.experiment_name)
         if not self.hfapi.repo_exists(self.repo_id, token=self.token, repo_type='model'):
             self.hfapi.create_repo(
                 self.repo_id,
                 token=self.token,
                 private=False,
                 repo_type='model',
-                exist_ok=True
+                exist_ok=True,
             )
+            time.sleep(2.0)
 
-        frequency = f"after every {self.interval} {{type}}."
+        frequency = f"after every {self.interval} {{type}}"
         if self.by_epoch:
             frequency = frequency.format(type='epochs')
         else:
-            frequency = frequency.format(type='iterations')
+            frequency = frequency.format(type='steps')
 
-        msg = f'Checkpoints will be pushed to repo {self.repo_url!r} {frequency}'
-        runner.logger.info(msg)
+        runner.logger.info(f'Checkpoints will be pushed to repo {self.repo_url!r} {frequency}.')
 
     def after_train(self, runner: Runner) -> None:
         runner.logger.info("Pushing visualizing data and safetensors to repo...")
-        # self._push_checkpoint(runner)
         self._push_tensorboard(runner)
         self._push_safetensors(runner)
-        self._remove_local_checkpoint(runner)
+
+    def after_val_epoch(self,
+                        runner,
+                        metrics: Optional[Dict[str, float]] = None) -> None:
+        self._push_checkpoint(runner)
 
     def after_train_epoch(self, runner: Runner) -> None:
         """Save the checkpoint and synchronize buffers after each epoch.
@@ -152,28 +157,87 @@ class CheckpointUploader(Hook):
                 (self.save_last and self.is_last_train_iter(runner))
         )
         if should_upload:
-            runner.logger.info(f'Pushing checkpoint at {runner.iter + 1} iterations...')
+            runner.logger.info(f'Pushing checkpoint at {runner.iter + 1} steps...')
             self._push_checkpoint(runner)
 
     def _push_checkpoint(self, runner: Runner):
-        """Push checkpoint to hub."""
-        latest_ckpt = find_latest_checkpoint(runner.experiment_dir)
+        """Push last and best checkpoint to hub."""
+        self.previous_last_ckpt = runner.message_hub.get_info('previous_last_ckpt', self.previous_last_ckpt)
+        self.previous_best_ckpt = runner.message_hub.get_info('previous_best_ckpt', self.previous_best_ckpt)
 
-        self.hfapi.upload_file(
-            path_or_fileobj=latest_ckpt,
-            path_in_repo=osp.basename(latest_ckpt),
-            repo_id=self.repo_id,
-            token=self.token
-        )
-        with self.hffs.open(self.path_format('last_checkpoint'), mode='w') as f:
-            f.write(osp.basename(latest_ckpt))
+        last_ckpt = find_latest_checkpoint(runner.experiment_dir)
+        best_ckpt = find_best_checkpoint(runner.experiment_dir)
+
+        if last_ckpt is not None:
+            logger.info("Pushing last checkpoint...")
+            if last_ckpt != self.previous_last_ckpt:
+                self._write_content(
+                    content=last_ckpt,
+                    path_in_repo=osp.basename(last_ckpt))
+
+                self._delete_remote_file(osp.basename(self.previous_last_ckpt))
+                self.previous_last_ckpt = last_ckpt
+
+            # write last checkpoint meta
+            self._write_content(
+                content=osp.basename(last_ckpt),
+                path_in_repo="last_checkpoint",
+                content_type='str')
+
+        if best_ckpt is not None:
+            logger.info("Pushing best checkpoint...")
+            if isinstance(best_ckpt, dict):
+                for ckpt_type, ckpt_path in best_ckpt.items():
+                    if ckpt_path is None or not osp.isfile(ckpt_path):
+                        continue
+
+                    if best_ckpt[ckpt_type] != self.previous_best_ckpt.get(ckpt_type):
+                        self._write_content(
+                            content=best_ckpt[ckpt_type],
+                            path_in_repo=osp.basename(ckpt_path))
+
+                        self._delete_remote_file(
+                            osp.basename(self.previous_best_ckpt.get(ckpt_type, '')))
+                        self.previous_best_ckpt[ckpt_type] = ckpt_path
+
+                    best_ckpt[ckpt_type] = osp.basename(best_ckpt[ckpt_type])
+
+            elif isinstance(best_ckpt, str):
+                self._write_content(
+                    content=best_ckpt,
+                    path_in_repo=osp.basename(best_ckpt))
+
+                best_ckpt = osp.basename(best_ckpt)
+
+            # write best checkpoint meta
+            self._write_content(
+                content=json.dumps(best_ckpt, indent=2),
+                path_in_repo='best_checkpoint',
+                content_type='str')
+
+        runner.message_hub.update_info('previous_last_ckpt', self.previous_last_ckpt)
+        runner.message_hub.update_info('previous_best_ckpt', self.previous_best_ckpt)
 
     def _push_tensorboard(self, runner: Runner):
-        src = osp.join(runner.experiment_dir, 'last_checkpoint')
-        dst = osp.join(runner.log_dir, 'last_checkpoint')
-        with open(src, mode='r') as fr:
-            with open(dst, mode='w') as fw:
-                fw.write(osp.basename(fr.read().strip()))
+        # src = osp.join(runner.experiment_dir, 'last_checkpoint')
+        # dst = osp.join(runner.log_dir, 'last_checkpoint')
+        #
+        # if osp.isfile(src):
+        #     with open(src, mode='r') as fr:
+        #         with open(dst, mode='w') as fw:
+        #             fw.write(osp.basename(fr.read().strip()))
+        #
+        # src = osp.join(runner.experiment_dir, 'best_checkpoint')
+        # dst = osp.join(runner.log_dir, 'best_checkpoint')
+        #
+        # if osp.isfile(src):
+        #     with open(src, mode='r') as fr:
+        #         best_ckpt = json.load(fr)
+        #         for ckpt_type in best_ckpt.keys():
+        #             best_ckpt[ckpt_type] = osp.basename(best_ckpt[ckpt_type])
+        #
+        #     with open(dst, mode='w') as fw:
+        #         fw.write(json.dumps(best_ckpt, indent=2))
 
         self.hfapi.upload_folder(
             repo_id=self.repo_id,
@@ -182,7 +246,8 @@ class CheckpointUploader(Hook):
             path_in_repo=runner.timestamp,
             repo_type='model',
             ignore_patterns=["vis_data/"],
-            delete_patterns='vis_data/*'
+            delete_patterns='vis_data/*',
+            run_as_future=False
         )
 
         self.hfapi.upload_folder(
@@ -191,13 +256,13 @@ class CheckpointUploader(Hook):
             folder_path=osp.join(runner.log_dir, 'vis_data'),
             path_in_repo=runner.timestamp,
             repo_type='model',
+            run_as_future=False
         )
 
-        self.hfapi.upload_file(
-            repo_id=self.repo_id,
-            path_or_fileobj=runner.save_cfg_file,
-            path_in_repo=osp.basename(runner.save_cfg_file)
-        )
+        self._write_content(
+            content=runner.save_cfg_file,
+            path_in_repo=osp.basename(runner.save_cfg_file),
+            content_type='path')
 
     def _push_safetensors(self, runner: Runner) -> None:
         """Save the current checkpoint and delete outdated checkpoint.
@@ -227,13 +292,22 @@ class CheckpointUploader(Hook):
                 folder_path=tmpdir,
             )
 
-    def _remove_local_checkpoint(self, runner: Runner):
-        runner.logger.info(
-            "Clean up all saved checkpoints in local. "
-            f"They are saved in {self.repo_url}/tree/main"
+    def _write_content(self, content: str, path_in_repo: str, content_type: Optional[str] = None):
+        if content_type == 'str':
+            content = io.BytesIO(content.encode())
+
+        self.hfapi.upload_file(
+            path_or_fileobj=content,
+            path_in_repo=path_in_repo,
+            repo_id=self.repo_id,
+            token=self.token,
         )
 
-        ckpts = glob.glob(f"{runner.experiment_dir}/*.pth")
-        for ckpt in ckpts:
-            with suppress(FileNotFoundError):
-                os.remove(ckpt)
+    def _delete_remote_file(self, filename: str):
+        with suppress(Exception, BaseException):
+            self.hfapi.delete_file(
+                path_in_repo=filename,
+                repo_id=self.repo_id,
+                repo_type='model',
+                token=self.token
+            )

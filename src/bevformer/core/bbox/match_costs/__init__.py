@@ -1,6 +1,6 @@
 from .match_cost import BBox3DL1Cost, SmoothL1Cost
 from src.registry import MATCH_COST
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.bevformer.builder import _build_with_fallback
 
 

@@ -7,7 +7,7 @@ import torch.nn as nn
 from mmdet3d.models.dense_heads.free_anchor3d_head import FreeAnchor3DHead
 from mmengine.model import BaseModule
 
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.registry import HEADS
 from src.utils.logging import getLogger
 from src.utils.fp16_utils import force_fp32, auto_fp16

@@ -15,7 +15,7 @@ from mmengine.model import BaseModule, ModuleList
 
 from src.registry import TRANSFORMER_LAYERS
 from src.bevformer.models.utils.bricks import build_feedforward_network, build_attention, build_norm_layer
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 
 # Avoid BC-breaking of importing MultiScaleDeformableAttention from this file
 try:

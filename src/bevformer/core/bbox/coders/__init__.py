@@ -4,7 +4,7 @@
 #
 from .nms_free_coder import NMSFreeCoder
 from src.registry import BBOX_CODERS
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.bevformer.builder import _build_with_fallback
 
 

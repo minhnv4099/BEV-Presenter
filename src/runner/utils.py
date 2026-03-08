@@ -1,5 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import os
+import os.path as osp
+import json
 import random
 import sys
 import time
@@ -8,11 +10,12 @@ from getpass import getuser
 from socket import gethostname
 from types import ModuleType
 from typing import Optional
-
 import numpy as np
 import torch
-
 import mmcv
+from src.utils.logging import getLogger
+
+logger = getLogger(__name__)
 
 
 def get_host_info() -> str:
@@ -97,3 +100,48 @@ def set_random_seed(seed: int,
     if deterministic:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
+def find_latest_checkpoint(path: str) -> Optional[str]:
+    """Find the latest checkpoint from the given path.
+
+    Refer to https://github.com/facebookresearch/fvcore/blob/main/fvcore/common/checkpoint.py  # noqa: E501
+
+    Args:
+        path(str): The path to find checkpoints.
+
+    Returns:
+        str or None: File path of the latest checkpoint.
+    """
+    save_file = osp.join(path, 'last_checkpoint')
+    last_saved: Optional[str]
+    if os.path.exists(save_file):
+        with open(save_file) as f:
+            last_saved = f.read().strip()
+    else:
+        logger.info('Did not find last_checkpoint to be resumed.')
+        last_saved = None
+    return last_saved
+
+
+def find_best_checkpoint(path: str) -> Optional[dict | str]:
+    """Find the best checkpoint from the given location.
+
+    Refer to https://github.com/facebookresearch/fvcore/blob/main/fvcore/common/checkpoint.py  # noqa: E501
+
+    Args:
+        path(str): The path to find checkpoints.
+
+    Returns:
+        str or None: File path of the best checkpoint.
+    """
+    save_file = osp.join(path, 'best_checkpoint')
+    last_saved: Optional[str]
+
+    if os.path.exists(save_file):
+        with open(save_file, 'rb') as f:
+            best_saved = json.load(f)
+    else:
+        logger.info('Did not find last_checkpoint to be resumed.')
+        best_saved = None
+    return best_saved

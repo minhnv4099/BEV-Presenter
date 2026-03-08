@@ -41,9 +41,7 @@ from mmengine.utils.dl_utils import (TORCH_VERSION, collect_env,
                                      set_multi_processing)
 from mmengine.visualization import Visualizer
 from mmengine.runner.checkpoint import (
-    _load_checkpoint,
     _load_checkpoint_to_model,
-    find_latest_checkpoint,
     save_checkpoint,
     weights_to_cpu
 )
@@ -60,6 +58,7 @@ from src.registry import (DATASETS, MODELS, RUNNERS, FUNCTIONS,
 from src.utils.logging import getLogger
 from src.device import get_device
 from src.utils.logging import MMLogger, print_log
+from .utils import find_latest_checkpoint
 from .priority import Priority, get_priority
 from .base_loop import BaseLoop
 from .loops import EpochBasedTrainLoop, IterBasedTrainLoop, TestLoop, ValLoop
@@ -353,7 +352,6 @@ class Runner:
                 f'\ttest_cfg={test_cfg}\n'
                 f'\ttest_dataloader={test_dataloader}.'
             )
-
         self._test_dataloader = test_dataloader
         self._test_loop = test_cfg
         self._test_evaluator = test_evaluator
@@ -368,6 +366,7 @@ class Runner:
         # it also will initialize multi-process and (or) distributed
         # environment.
         self.setup_env(env_cfg)
+
         # self._deterministic and self._seed will be set in the
         # `set_randomness`` method
         self._randomness_cfg = randomness
@@ -383,8 +382,8 @@ class Runner:
 
         self._experiment_dir = osp.join(self._work_dir, self.experiment_name)
         self._log_dir = osp.join(self._experiment_dir, self.timestamp)
-
         mmengine.mkdir_or_exist(self._log_dir)
+
         # Used to reset registries location. See :meth:`Registry.build` for more details.
         if default_scope is not None:
             default_scope = DefaultScope.get_instance(  # type: ignore
@@ -400,9 +399,6 @@ class Runner:
         log_processor = dict() if log_processor is None else log_processor
         self.log_processor = self.build_log_processor(log_processor)
 
-        # Collect and log environment information.
-        self._log_env(env_cfg)
-
         # Build `message_hub` for communication among components.
         # `message_hub` can store log scalars (loss, learning rate) and
         # runtime information (iter and epoch). Those components that do not
@@ -413,10 +409,15 @@ class Runner:
         # current epoch by `cur_epoch = self.message_hub.get_info('epoch')`.
         # See `MessageHub` and `ManagerMixin` for more details.
         self.message_hub = self.build_message_hub()
+
         # visualizer used for writing log or visualizing all kinds of data
         self.visualizer = self.build_visualizer(visualizer)
         if self.cfg:
             self.visualizer.add_config(self.cfg)
+
+        # Collect and log environment information.
+        self._log_env(env_cfg)
+        self.logger.info(f'Set random seed to {self.seed}, deterministic: {self.deterministic}')
 
         # flag to mark whether checkpoint has been loaded or resumed
         self._resume = resume
@@ -428,6 +429,8 @@ class Runner:
             # Merge the data_preprocessor to model config.
             model.setdefault('data_preprocessor', data_preprocessor)
         self.model = self.build_model(model)
+        self.logger.info(f"Model architecture:\n{self.model}")
+
         # wrap model
         self.model = self.wrap_model(self.cfg.get('model_wrapper_cfg'), self.model)
 
@@ -445,6 +448,7 @@ class Runner:
                          f'order:\n{self.get_hooks_info()}')
 
         # dump `cfg` to `work_dir`
+        self.logger.info(f"Config:\n{self.cfg.pretty_text}")
         self.dump_config()
 
     @master_only
@@ -671,6 +675,10 @@ class Runner:
     @property
     def need_resume(self):
         return self._resume
+
+    @property
+    def resume_from_local(self):
+        return self._resume_from_local
 
     def setup_env(self, env_cfg: Dict) -> None:
         """Setup environment.
@@ -1457,7 +1465,6 @@ class Runner:
         Returns:
             Dataloader: DataLoader build from ``dataloader_cfg``.
         """
-        logger.info("Building dataloader")
         if isinstance(dataloader, DataLoader):
             return dataloader
 
@@ -1778,8 +1785,10 @@ class Runner:
         # This must be called **AFTER** model has been wrapped.
         self._maybe_compile('train_step')
         model = None
+        model = self.train_loop.run()
         try:
-            model = self.train_loop.run()  # type: ignore
+            # type: ignore
+            ...
         except KeyboardInterrupt as e:
             logger.error("Catch error. So treat it as 'after_train'.")
             # self.call_hook('after_train')
@@ -1847,11 +1856,10 @@ class Runner:
         # decide to load from checkpoint or resume from checkpoint
         resume_from = None
         if self.need_resume:
-            self.logger.info("Load or resume")
+            logger.info("Load or resume from local...")
             if self._load_from is None:
                 # auto resume from the latest checkpoint from local
                 resume_from = find_latest_checkpoint(self.experiment_dir)
-                self.logger.info(f'Auto resumed from the latest checkpoint {resume_from!r}.')
             else:
                 # resume from the specified checkpoint
                 resume_from = self._load_from
@@ -1860,6 +1868,9 @@ class Runner:
             self.resume(resume_from)
         elif self._load_from is not None:
             self.load_checkpoint(self._load_from)
+
+        if self.need_resume and not self.has_loaded:
+            logger.info("Will try to resume from remote by hook")
 
     def resume(self,
                filename: Optional[str] = None,
@@ -1888,9 +1899,9 @@ class Runner:
             checkpoint = self.load_checkpoint(filename, map_location=map_location)
 
         if checkpoint is None:
-            return ...
+            return None
 
-        logger.info(f"Resume checkpoint from {filename!r}.")
+        self.logger.info(f'Auto resumed from the checkpoint {filename!r}.')
 
         self.train_loop._epoch = checkpoint['meta']['epoch']
         self.train_loop._iter = checkpoint['meta']['iter']
@@ -2190,7 +2201,7 @@ class Runner:
                 try:
                     getattr(hook, fn_name)(self, **kwargs)
                 except TypeError as e:
-                    raise TypeError(f'{e} in {hook}') from None
+                    raise TypeError(f'{e} in {hook}')
 
     def register_hook(
             self,

@@ -15,7 +15,7 @@ from torch.nn.modules.batchnorm import _BatchNorm
 
 from mmengine.model import BaseModule
 from src.registry import MODELS, BACKBONES
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 
 
 VoVNet19_slim_dw_eSE = {

@@ -14,7 +14,7 @@ from mmengine.utils.version_utils import digit_version
 from mmengine.model.weight_init import bias_init_with_prob
 from torch.version import __version__ as TORCH_VERSION
 
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.bevformer.core.bbox import build_bbox_coder
 from src.registry import HEADS
 from ..utils.pytorch_utils import inverse_sigmoid

@@ -13,7 +13,7 @@ from torchvision.transforms.functional import rotate
 from mmengine.model import xavier_init
 from mmengine.model import BaseModule
 
-from src.typing import ConfigType
+from src.typing_ import ConfigType
 from src.registry import TRANSFORMERS
 from src.utils.logging import getLogger
 from src.utils.fp16_utils import force_fp32, auto_fp16
