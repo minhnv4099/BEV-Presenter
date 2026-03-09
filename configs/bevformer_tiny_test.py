@@ -294,14 +294,16 @@ test_evaluator = dict(
                   version=version,
                   data_root=data_root, ann_file=data['val']['ann_file'])])
 
+# ------------ Training hyperparameters ------------
 by_epoch = False
-interval = 1 if by_epoch else 2
-val_interval = 1 if by_epoch else 2
-log_interval = 2
-max_epochs = 10
-max_iters = 6
-val_max_iters = 1
+interval = 1 if by_epoch else 100
+val_interval = 1 if by_epoch else 100
+log_interval = 50
+max_epochs = 20
+max_iters = 2000
+val_max_iters = 20
 test_max_iters = -1
+# --------------------------------------------------
 
 train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=val_interval)
 val_cfg = dict(max_iters=val_max_iters)
