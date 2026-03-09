@@ -28,9 +28,6 @@ WORK_DIR = "experiment"
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
     parser.add_argument(
-        '--debug',
-        action='store_true')
-    parser.add_argument(
         '--config',
         help='config file path, locate in ./configs/',
         default=DEFAULT_CONFIG)
@@ -52,7 +49,7 @@ def parse_args():
         help='The checkpoint file to load from. Defaults to None.')
     parser.add_argument(
         '--mode',
-        default='val',
+        default='train',
         choices=['train', 'val', 'predict'],
         help='Train, test or predict. If mode is val, automatic resume the '
              'checkpoint from `load_from`, so provide it.')
@@ -118,7 +115,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.debug:
+    if args.config:
         args.config = DEFAULT_CONFIG
     else:
         logger.warning(

@@ -92,15 +92,7 @@ class CheckpointHookV2(CheckpointHook):
 
         self.key_indicators = key_indicators
 
-    def before_train(self, runner: Runner) -> None:
-        """Finish all operations, related to checkpoint.
-
-        This function will get the appropriate file client, and the directory
-        to save these checkpoints of the model.
-
-        Args:
-            runner (Runner): The runner of the training process.
-        """
+    def before_run(self, runner) -> None:
         if self.out_dir is None:
             self.out_dir = runner.work_dir
 
@@ -115,6 +107,15 @@ class CheckpointHookV2(CheckpointHook):
         else:
             self.file_backend = self.file_client
 
+    def before_train(self, runner: Runner) -> None:
+        """Finish all operations, related to checkpoint.
+
+        This function will get the appropriate file client, and the directory
+        to save these checkpoints of the model.
+
+        Args:
+            runner (Runner): The runner of the training process.
+        """
         # if `self.out_dir` is not equal to `runner.work_dir`, it means that
         # `self.out_dir` is set so the final `self.out_dir` is the
         # concatenation of `self.out_dir` and the last level directory of
@@ -124,30 +125,11 @@ class CheckpointHookV2(CheckpointHook):
             self.out_dir = self.file_backend.join_path(
                 self.out_dir, basename)  # type: ignore  # noqa: E501
 
-        frequency = f"after every {self.interval} {{type}}"
-        if self.by_epoch:
-            frequency = frequency.format(type='epochs')
-        else:
-            frequency = frequency.format(type='steps')
-
+        frequency = self._get_frequency()
         runner.logger.info(f'Checkpoints will be saved to {self.out_dir!r} {frequency}.')
 
-        new_best_ckpt = not osp.isfile(osp.join(runner.experiment_dir, 'best_checkpoint'))
-
         if self.save_best is not None:
-            if len(self.key_indicators) == 1:
-                if 'best_ckpt' not in runner.message_hub.runtime_info or new_best_ckpt:
-                    self.best_ckpt_path = None
-                else:
-                    self.best_ckpt_path = runner.message_hub.get_info('best_ckpt')
-            else:
-                for key_indicator in self.key_indicators:
-                    best_ckpt_name = f'best_ckpt_{key_indicator}'
-                    if best_ckpt_name not in runner.message_hub.runtime_info or new_best_ckpt:
-                        self.best_ckpt_path_dict[key_indicator] = None
-                    else:
-                        self.best_ckpt_path_dict[key_indicator] = runner.message_hub.get_info(best_ckpt_name)
-
+            self._ini_best_ckpt(runner)
             runner.logger.info(f'The best checkpoint will be saved to {self.out_dir!r} '
                                f'based on {self.key_indicators} with rules {self.rules} {frequency}.')
 
@@ -172,6 +154,31 @@ class CheckpointHookV2(CheckpointHook):
 
         if self.published_keys:
             runner.logger.info(f"Publish checkpoint with keys: {self.published_keys} after training.")
+
+    def _get_frequency(self):
+        frequency = f"after every {self.interval} {{type}}"
+        if self.by_epoch:
+            frequency = frequency.format(type='epochs')
+        else:
+            frequency = frequency.format(type='steps')
+
+        return frequency
+
+    def _ini_best_ckpt(self, runner: Runner):
+        new_best_ckpt = not osp.isfile(osp.join(runner.experiment_dir, 'best_checkpoint'))
+
+        if len(self.key_indicators) == 1:
+            if 'best_ckpt' not in runner.message_hub.runtime_info or new_best_ckpt:
+                self.best_ckpt_path = None
+            else:
+                self.best_ckpt_path = runner.message_hub.get_info('best_ckpt')
+        else:
+            for key_indicator in self.key_indicators:
+                best_ckpt_name = f'best_ckpt_{key_indicator}'
+                if best_ckpt_name not in runner.message_hub.runtime_info or new_best_ckpt:
+                    self.best_ckpt_path_dict[key_indicator] = None
+                else:
+                    self.best_ckpt_path_dict[key_indicator] = runner.message_hub.get_info(best_ckpt_name)
 
     def after_train_epoch(self, runner: Runner, outputs: Optional[dict] = None) -> None:
         """Save the checkpoint and synchronize buffers after each epoch.
@@ -332,6 +339,13 @@ class CheckpointHookV2(CheckpointHook):
         best_ckpt_file = osp.join(runner.experiment_dir, 'best_checkpoint')
         best_ckpt = getattr(self, 'best_ckpt_path', None) or getattr(self, 'best_ckpt_path_dict', None)
         dump(best_ckpt, best_ckpt_file, indent=2)
+
+    def before_val(self, runner: Runner) -> None:
+        frequency = self._get_frequency()
+        if self.save_best is not None:
+            self._ini_best_ckpt(runner)
+            runner.logger.info(f'The best checkpoint will be saved to {self.out_dir!r} '
+                               f'based on {self.key_indicators} with rules {self.rules} {frequency}.')
 
     def after_val_epoch(self, runner: Runner, metrics: dict):
         """Save the checkpoint and synchronize buffers after each evaluation

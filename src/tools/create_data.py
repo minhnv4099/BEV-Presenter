@@ -10,6 +10,7 @@ sys.path.append('.')
 
 import argparse
 import nuscenes_converter
+from contextlib import suppress
 from src.utils.logging import getLogger
 
 logger = getLogger(__name__)
@@ -39,16 +40,17 @@ def nuscenes_data_prep(root_path: str,
     nuscenes_converter.create_nuscenes_infos(
         root_path, out_dir, can_bus_root_path, info_prefix, version=version, max_sweeps=max_sweeps)
 
-    if version == 'v1.0-test':
-        info_test_path = osp.join(out_dir, f'{info_prefix}_infos_temporal_test.pkl')
-        nuscenes_converter.export_2d_annotation(root_path, info_test_path, version=version)
-    else:
-        info_train_path = osp.join(out_dir, f'{info_prefix}_infos_temporal_train.pkl')
-        info_val_path = osp.join(out_dir, f'{info_prefix}_infos_temporal_val.pkl')
+    with suppress(BaseException):
+        if version == 'v1.0-test':
+            info_test_path = osp.join(out_dir, f'{info_prefix}_infos_temporal_test.pkl')
+            nuscenes_converter.export_2d_annotation(root_path, info_test_path, version=version)
+        else:
+            info_train_path = osp.join(out_dir, f'{info_prefix}_infos_temporal_train.pkl')
+            info_val_path = osp.join(out_dir, f'{info_prefix}_infos_temporal_val.pkl')
 
-        nuscenes_converter.export_2d_annotation(root_path, info_train_path, version=version)
-        nuscenes_converter.export_2d_annotation(root_path, info_val_path, version=version)
-        # create_groundtruth_database(dataset_name, root_path, info_prefix, f'{out_dir}/{info_prefix}_infos_train.pkl')
+            nuscenes_converter.export_2d_annotation(root_path, info_train_path, version=version)
+            nuscenes_converter.export_2d_annotation(root_path, info_val_path, version=version)
+            # create_groundtruth_database(dataset_name, root_path, info_prefix, f'{out_dir}/{info_prefix}_infos_train.pkl')
 
 
 def get_args():

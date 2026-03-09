@@ -91,6 +91,7 @@ def main(args: Namespace):
     logger.info(msg)
 
     hfapi = HfApi()
+
     data_path = hfapi.hf_hub_download(
         repo_id=args.repo,
         repo_type='dataset',
@@ -111,7 +112,7 @@ def main(args: Namespace):
         token=args.token
     )
     safe_extract(tar=data_path, out_dir=flag_out_dir)
-    logger.info(f"Can bus data is saved in {flag_out_dir!r}.")
+    logger.info(f"Can bus data is saved in {osp.join(flag_out_dir, 'can_bus')!r}.")
 
 
 if __name__ == "__main__":

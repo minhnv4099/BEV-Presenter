@@ -1,7 +1,7 @@
 # ---------------------------------------------
 # Copyright (c) OpenMMLab. All rights reserved.
 # ---------------------------------------------
-#  Modified by Zhiqi Li
+#  Modified by Minh Nguyen
 # ---------------------------------------------
 import mmcv
 import numpy as np
@@ -14,7 +14,6 @@ from shapely.geometry import MultiPoint, box
 from typing import List, Tuple, Union, Sequence
 
 from mmengine.utils import check_file_exist, track_iter_progress
-from mmengine.fileio import dump, load
 from nuscenes.utils import splits
 from nuscenes.utils.geometry_utils import view_points
 
@@ -23,7 +22,7 @@ from src.data_apis import CustomNuScenes as NuScenes
 from src.datasets.nuscenes_dataset import CustomNuScenesDataset
 from src.structures.bbox_3d import points_cam2img
 from src.utils.logging import getLogger
-from src.utils import dump_check_exist
+from src.utils.fileio import dump, load
 
 nus_categories = ('car', 'truck', 'trailer', 'bus', 'construction_vehicle',
                   'bicycle', 'motorcycle', 'pedestrian', 'traffic_cone',
@@ -110,30 +109,32 @@ def create_nuscenes_infos(root_path: str,
         data = dict(infos=train_nusc_infos, metadata=metadata)
 
         info_path = osp.join(out_path, '{}_infos_temporal_test.pkl'.format(info_prefix))
-        if dump_check_exist(data, info_path):
-            logger.info(f"Save test data infos in {info_path!r}.")
+        dump(data, info_path)
+        logger.info(f"Save test data infos in {info_path!r}.")
 
         info_path = info_path.replace('pkl', 'json')
-        if dump_check_exist(data, info_path):
-            logger.info(f"Save test data infos in {info_path!r}.")
+        dump(data, info_path)
+        logger.info(f"Save test data infos in {info_path!r}.")
     else:
         logger.info('train sample: {}, val sample: {}'.format(len(train_nusc_infos), len(val_nusc_infos)))
 
         data = dict(infos=train_nusc_infos, metadata=metadata)
         info_train_path = osp.join(out_path, '{}_infos_temporal_train.pkl'.format(info_prefix))
-        if dump_check_exist(data, info_train_path):
-            logger.info(f"Save train data infos in {info_train_path!r}.")
+        dump(data, info_train_path)
+        logger.info(f"Save train data infos in {info_train_path!r}.")
+
         info_train_path = info_train_path.replace('pkl', 'json')
-        if dump_check_exist(data, info_train_path):
-            logger.info(f"Save train data infos in {info_train_path!r}.")
+        dump(data, info_train_path)
+        logger.info(f"Save train data infos in {info_train_path!r}.")
 
         data = dict(infos=val_nusc_infos, metadata=metadata)
         info_val_path = osp.join(out_path, '{}_infos_temporal_val.pkl'.format(info_prefix))
-        if dump_check_exist(data, info_val_path):
-            logger.info(f"Save val data infos in {info_val_path!r}.")
+        dump(data, info_val_path)
+        logger.info(f"Save val data infos in {info_val_path!r}.")
+
         info_val_path = info_val_path.replace('pkl', 'json')
-        if dump_check_exist(data, info_val_path):
-            logger.info(f"Save val data infos in {info_val_path!r}.")
+        dump(data, info_val_path)
+        logger.info(f"Save val data infos in {info_val_path!r}.")
 
 
 def get_available_scenes(nusc: NuScenes):
