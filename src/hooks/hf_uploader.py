@@ -168,7 +168,7 @@ class CheckpointUploader(Hook):
         last_ckpt = find_latest_checkpoint(runner.experiment_dir)
         best_ckpt = find_best_checkpoint(runner.experiment_dir)
 
-        if last_ckpt is not None:
+        if last_ckpt is not None and osp.isfile(last_ckpt):
             logger.info("Pushing last checkpoint...")
             if last_ckpt != self.previous_last_ckpt:
                 self._write_content(
@@ -219,26 +219,6 @@ class CheckpointUploader(Hook):
         runner.message_hub.update_info('previous_best_ckpt', self.previous_best_ckpt)
 
     def _push_tensorboard(self, runner: Runner):
-        # src = osp.join(runner.experiment_dir, 'last_checkpoint')
-        # dst = osp.join(runner.log_dir, 'last_checkpoint')
-        #
-        # if osp.isfile(src):
-        #     with open(src, mode='r') as fr:
-        #         with open(dst, mode='w') as fw:
-        #             fw.write(osp.basename(fr.read().strip()))
-        #
-        # src = osp.join(runner.experiment_dir, 'best_checkpoint')
-        # dst = osp.join(runner.log_dir, 'best_checkpoint')
-        #
-        # if osp.isfile(src):
-        #     with open(src, mode='r') as fr:
-        #         best_ckpt = json.load(fr)
-        #         for ckpt_type in best_ckpt.keys():
-        #             best_ckpt[ckpt_type] = osp.basename(best_ckpt[ckpt_type])
-        #
-        #     with open(dst, mode='w') as fw:
-        #         fw.write(json.dumps(best_ckpt, indent=2))
-
         self.hfapi.upload_folder(
             repo_id=self.repo_id,
             token=self.token,

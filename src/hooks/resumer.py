@@ -60,13 +60,13 @@ class CheckpointResumer(Hook):
                 runner.resume(filename=ckpt_fpath)
                 shutil.rmtree(osp.split(ckpt_fpath)[0], ignore_errors=True)
 
-    # def before_val(self, runner: Runner) -> None:
-    #     if runner.need_resume and not runner.has_loaded:
-    #         runner.logger.info(f"Loading best checkpoint from remote {self.repo_url!r}.")
-    #         ckpt_fpath = self._get_checkpoint_path('best')
-    #         if ckpt_fpath is not None:
-    #             runner.load_checkpoint(filename=ckpt_fpath)
-    #             shutil.rmtree(osp.split(ckpt_fpath)[0], ignore_errors=True)
+    def before_val(self, runner: Runner) -> None:
+        if runner.need_resume and not runner.has_loaded:
+            runner.logger.info(f"Loading best checkpoint from remote {self.repo_url!r}.")
+            ckpt_fpath = self._get_checkpoint_path('best', 'mAP')
+            if ckpt_fpath is not None:
+                runner.load_checkpoint(filename=ckpt_fpath)
+                shutil.rmtree(osp.split(ckpt_fpath)[0], ignore_errors=True)
 
     def _get_checkpoint_path(self, ckpt_type: Literal['last', 'best'], metric: str = 'loss'):
         ckpt_path = None

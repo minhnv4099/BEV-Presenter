@@ -2,6 +2,11 @@
 
 
 # Installation
+The project requires python==3.10
+```bash
+uv venv --python 3.10
+```
+
 Use **uv** to install dependencies in [uv.lock](uv.lock).
 ```bash
 uv pip install -e .
@@ -10,14 +15,13 @@ uv pip install -e .
 Should run any file by ```uv run ...```.
 
 Get token [here](https://docs.google.com/document/d/129TDtn83w0sZky860JnfVmeleP7Bv74rjDI1J3dz83M/edit?usp=sharing).
-Then paste to `~/.cache/huggingface/token` file to access [organization repository](https://huggingface.co/5421Project). 
+Then paste to `~/.cache/huggingface/token` file (in Linux) or set environment variable ``HF_TOKEN`` to access [organization repository](https://huggingface.co/5421Project). 
 
 ## Prepare data
 Run command to download can bus and nuscene data from [repo](https://huggingface.co/datasets/5421Project/nuscene).
 ```bash
 uv run src/tools/download_data.py \
     --repo 5421Project/nuscene \
-    --token <TOKEN> \
     --out-dir data \
     --version v1.0-mini \
     --flag nuscenes
@@ -43,10 +47,13 @@ bevformer/
 │   │   ├── can_bus/
 │   │   ├── v1.0-mini/
 │   │   │   ├── maps/
+│   │   │   ├── reverse/
 │   │   │   ├── samples/
 │   │   │   ├── sweeps/
 │   │   │   ├── v1.0-mini/
+│   |   |   ├── nuscenes_infos_temporal_train.json
 │   |   |   ├── nuscenes_infos_temporal_train.pkl
+│   |   |   ├── nuscenes_infos_temporal_val.json
 │   |   |   ├── nuscenes_infos_temporal_val.pkl
 ```
 
@@ -65,10 +72,8 @@ uv run train.py \
    --experiment-name baseline
 ```
 
-Checkpoints are pushed to repo **5421Project/{experiment_name}** intervally.
+Checkpoints are pushed to repo **[5421Project](https://huggingface.co/datasets/5421Project)/{experiment_name}** intervally.
 
 
 ## Config
 See [bevformer_tiny_test.py](configs/bevformer_tiny_test.py) to understand config and edit if needed.
-
-Can edit some fields to get various experiments.

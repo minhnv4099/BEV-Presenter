@@ -2,24 +2,34 @@
 #  Copyright (c) 2026
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
+from typing import Any, Optional
 from mmengine.fileio import dump as mmdump
 from mmengine.fileio import load as mmload
-from typing import Any
 from os import path as osp
 
 
-def dump(obj,
-         file=None,
-         file_format='json',
-         file_client_args=None,
-         backend_args=None,
-         indent: int = None,
+def dump(obj: Any,
+         file: Optional[str] = None,
+         file_format: Optional[str] = None,
+         file_client_args: Optional[dict] = None,
+         backend_args: Optional[dict] = None,
          **kwargs):
+    if file:
+        base_name, ext = osp.splitext(file)
+        if ext:
+            file_format = ext[1:]
+        else:
+            # file with no extension
+            file_format = 'json'
+    else:
+        # dump as json
+        file_format = 'json'
 
-    if file is None:
-        file_format = file_format or 'json'
-
-    indent = indent or 3
+    if file_format == 'json':
+        kwargs.setdefault('indent', 2)
+    else:
+        # others don't have indent
+        kwargs.pop('indent', None)
 
     return mmdump(
         obj,
@@ -27,22 +37,13 @@ def dump(obj,
         file_format,
         file_client_args,
         backend_args,
-        indent=indent,
         **kwargs
     )
 
 
 def load(file,
-         file_format=None,
-         file_client_args=None,
-         backend_args=None,
+         file_format: Optional[str] = None,
+         file_client_args: Optional[dict] = None,
+         backend_args: Optional[dict] = None,
          **kwargs):
     return mmload(file, file_format, file_client_args, backend_args, **kwargs)
-
-
-def dump_check_exist(data: Any, file_path: str, replace_exist: bool = False):
-    if not osp.exists(file_path):
-        dump(data, file_path)
-        return True
-
-    return False
