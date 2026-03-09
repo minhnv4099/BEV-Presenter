@@ -46,6 +46,7 @@ MANIFEST
 !/data/**/.plk
 # submodules
 mmcv_clone/
+BEVFormer/
 
 # ignored files
 test_utils.py

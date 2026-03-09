@@ -119,7 +119,7 @@ def find_latest_checkpoint(path: str) -> Optional[str]:
         with open(save_file) as f:
             last_saved = f.read().strip()
     else:
-        logger.info('Did not find last_checkpoint to be resumed.')
+        logger.info('Did not find last checkpoint.')
         last_saved = None
     return last_saved
 
@@ -142,6 +142,6 @@ def find_best_checkpoint(path: str) -> Optional[dict | str]:
         with open(save_file, 'rb') as f:
             best_saved = json.load(f)
     else:
-        logger.info('Did not find last_checkpoint to be resumed.')
+        logger.info('Did not find best checkpoint.')
         best_saved = None
     return best_saved

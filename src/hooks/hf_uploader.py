@@ -16,6 +16,7 @@ from huggingface_hub import HfApi, save_torch_state_dict, HfFileSystem
 from .hook import Hook
 from src.runner.utils import find_latest_checkpoint, find_best_checkpoint
 from src.registry import HOOKS
+from src.utils.fileio import load, dump
 from src.utils.logging import getLogger
 
 if TYPE_CHECKING:
@@ -108,11 +109,6 @@ class CheckpointUploader(Hook):
         self._push_tensorboard(runner)
         self._push_safetensors(runner)
 
-    def after_val_epoch(self,
-                        runner,
-                        metrics: Optional[Dict[str, float]] = None) -> None:
-        self._push_checkpoint(runner)
-
     def after_train_epoch(self, runner: Runner) -> None:
         """Save the checkpoint and synchronize buffers after each epoch.
 
@@ -160,13 +156,18 @@ class CheckpointUploader(Hook):
             runner.logger.info(f'Pushing checkpoint at {runner.iter + 1} steps...')
             self._push_checkpoint(runner)
 
-    def _push_checkpoint(self, runner: Runner):
-        """Push last and best checkpoint to hub."""
-        self.previous_last_ckpt = runner.message_hub.get_info('previous_last_ckpt', self.previous_last_ckpt)
-        self.previous_best_ckpt = runner.message_hub.get_info('previous_best_ckpt', self.previous_best_ckpt)
+    def after_val_epoch(self,
+                        runner,
+                        metrics: Optional[Dict[str, float]] = None) -> None:
+        self._push_best_ckpt(runner)
+
+    def _push_last_ckpt(self, runner: Runner):
+        prev_last_ckpt_path = osp.join(osp.join(runner.experiment_dir, 'prev_last_checkpoint'))
+        if runner.need_resume:
+            if osp.isfile(prev_last_ckpt_path):
+                self.previous_last_ckpt = load(prev_last_ckpt_path, file_format='json')
 
         last_ckpt = find_latest_checkpoint(runner.experiment_dir)
-        best_ckpt = find_best_checkpoint(runner.experiment_dir)
 
         if last_ckpt is not None and osp.isfile(last_ckpt):
             logger.info("Pushing last checkpoint...")
@@ -183,6 +184,16 @@ class CheckpointUploader(Hook):
                 content=osp.basename(last_ckpt),
                 path_in_repo="last_checkpoint",
                 content_type='str')
+
+        dump(self.previous_last_ckpt, prev_last_ckpt_path, file_format='json')
+
+    def _push_best_ckpt(self, runner: Runner):
+        prev_best_ckpt_path = osp.join(osp.join(runner.experiment_dir, 'prev_best_checkpoint'))
+        if runner.need_resume:
+            if osp.isfile(prev_best_ckpt_path):
+                self.previous_best_ckpt = load(prev_best_ckpt_path, file_format='json')
+
+        best_ckpt = find_best_checkpoint(runner.experiment_dir)
 
         if best_ckpt is not None:
             logger.info("Pushing best checkpoint...")
@@ -215,8 +226,12 @@ class CheckpointUploader(Hook):
                 path_in_repo='best_checkpoint',
                 content_type='str')
 
-        runner.message_hub.update_info('previous_last_ckpt', self.previous_last_ckpt)
-        runner.message_hub.update_info('previous_best_ckpt', self.previous_best_ckpt)
+        dump(self.previous_best_ckpt, prev_best_ckpt_path, file_format='json')
+
+    def _push_checkpoint(self, runner: Runner):
+        """Push last and best checkpoint to hub."""
+        self._push_last_ckpt(runner)
+        self._push_best_ckpt(runner)
 
     def _push_tensorboard(self, runner: Runner):
         self.hfapi.upload_folder(
@@ -270,6 +285,7 @@ class CheckpointUploader(Hook):
             self.hfapi.upload_folder(
                 repo_id=self.repo_id,
                 folder_path=tmpdir,
+                delete_patterns=['*.safetensors']
             )
 
     def _write_content(self, content: str, path_in_repo: str, content_type: Optional[str] = None):

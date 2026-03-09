@@ -18,7 +18,7 @@ from src.runner import Runner
 from src.utils.env import find_load_env
 from src.utils.logging import getLogger
 
-find_load_env()
+# find_load_env()
 logger = getLogger(name="trainer")
 
 DEFAULT_CONFIG = "configs/bevformer_tiny_test.py"
@@ -28,9 +28,13 @@ WORK_DIR = "experiment"
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
     parser.add_argument(
+        '--show-experiments',
+        action='store_true',
+        help="Show available experiments.")
+    parser.add_argument(
         '--config',
         help='config file path, locate in ./configs/',
-        default=DEFAULT_CONFIG)
+        default=None)
     parser.add_argument(
         '--work-dir',
         help='the dir to save logs and checkpoints',
@@ -55,9 +59,11 @@ def parse_args():
              'checkpoint from `load_from`, so provide it.')
     parser.add_argument(
         '--experiment-name',
-        default="baseline",
+        required=False,
+        default='baseline',
         help="Experiment name, we use it as different configs"
-             "Such as v1-resnet-101, the corresponding repo and dir will be created.")
+             "Such as v1-resnet-101, the corresponding repo and dir will be created."
+             " Run command with `--show-experiments` to see available experiments.")
     parser.add_argument(
         '--repo-id',
         default=None,
@@ -114,10 +120,13 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.show_experiments:
+        experiments = list(map(lambda x: osp.basename(x), filter(lambda x: osp.isdir(x), glob.glob(rf"{args.work_dir}/*"))))
+        logger.info(f"Available experiments in: {experiments}.")
+        return
 
     if args.config:
-        args.config = DEFAULT_CONFIG
-    else:
+        logger.info(f"Use provided config at {args.config!r}.")
         logger.warning(
             "It's highly recommended to resume config file from experiment dir"
             " to continue training with consistent configs/hyperparameters."
@@ -127,7 +136,9 @@ def main():
         try:
             config_file = f"{args.work_dir}/{args.experiment_name}/*.py"
             args.config = glob.glob(config_file, recursive=False)[0]
+            logger.info(f'Continue with experiment {args.experiment_name!r}.')
         except IndexError:
+            logger.info(f"Use default config at {args.config!r}.")
             args.config = DEFAULT_CONFIG
 
     cfg = Config.fromfile(args.config)

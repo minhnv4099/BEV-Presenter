@@ -41,6 +41,7 @@ class CheckpointResumer(Hook):
             self.repo_id = f"{repo_id}/{{repo_name}}"
 
         self.token = token
+        self.resume_by_val = True
 
     @property
     def repo_url(self):
@@ -53,17 +54,21 @@ class CheckpointResumer(Hook):
         self.repo_id = self.repo_id.format(repo_name=runner.experiment_name)
 
     def before_train(self, runner: Runner) -> None:
+        self.resume_by_val = False
         if runner.need_resume and not runner.has_loaded:
-            runner.logger.info(f"Loading latest checkpoint from remote {self.repo_url!r}.")
+            logger.info(f"Loading latest checkpoint from remote {self.repo_url!r}.")
             ckpt_fpath = self._get_checkpoint_path('last')
             if ckpt_fpath is not None:
                 runner.resume(filename=ckpt_fpath)
                 shutil.rmtree(osp.split(ckpt_fpath)[0], ignore_errors=True)
 
     def before_val(self, runner: Runner) -> None:
+        if not self.resume_by_val:
+            return
+
         if runner.need_resume and not runner.has_loaded:
-            runner.logger.info(f"Loading best checkpoint from remote {self.repo_url!r}.")
-            ckpt_fpath = self._get_checkpoint_path('best', 'mAP')
+            logger.info(f"Loading best checkpoint from remote {self.repo_url!r}.")
+            ckpt_fpath = self._get_checkpoint_path('best', 'loss')
             if ckpt_fpath is not None:
                 runner.load_checkpoint(filename=ckpt_fpath)
                 shutil.rmtree(osp.split(ckpt_fpath)[0], ignore_errors=True)
