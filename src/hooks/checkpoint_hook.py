@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os.path as osp
 from collections import deque
-from typing import Optional, List, Dict, TYPE_CHECKING, Union
+from typing import Optional, List, Dict, TYPE_CHECKING, Union, Any
 from mmengine.dist import master_only
 from mmengine.hooks import CheckpointHook
 from mmengine.dist import is_main_process
@@ -93,8 +93,6 @@ class CheckpointHookV2(CheckpointHook):
         self.key_indicators = key_indicators
 
     def _ini_best_ckpt(self, runner: Runner):
-        new_best_ckpt = not osp.isfile(osp.join(runner.experiment_dir, 'best_checkpoint'))
-
         if self.is_init_best_ckpt:
             return
 
@@ -152,6 +150,8 @@ class CheckpointHookV2(CheckpointHook):
         # `self.out_dir` is set so the final `self.out_dir` is the
         # concatenation of `self.out_dir` and the last level directory of
         # `runner.work_dir`
+        self.reset_loss_metric = True
+
         if self.out_dir != runner.work_dir:
             basename = osp.basename(runner.work_dir.rstrip(osp.sep))
             self.out_dir = self.file_backend.join_path(
@@ -236,7 +236,7 @@ class CheckpointHookV2(CheckpointHook):
             if outputs is not None:
                 self._save_best_checkpoint(runner, outputs)
 
-    def _save_best_checkpoint(self, runner, metrics) -> None:
+    def _save_best_checkpoint(self, runner: Runner, metrics: dict[str, Any]) -> None:
         """Save the current checkpoint and delete outdated checkpoint.
 
         Args:
@@ -281,6 +281,12 @@ class CheckpointHookV2(CheckpointHook):
                 best_score = self.init_value_map[rule]
             else:
                 best_score = runner.message_hub.get_info(best_score_key)
+
+            # check if best ckpt path is in local
+            if (best_ckpt_path is None
+                    or not self.file_backend.isfile(best_ckpt_path)
+                    or not self.file_backend.isdir(best_ckpt_path)):
+                best_score = self.init_value_map[rule]
 
             if key_score is None or not self.is_better_than[key_indicator](
                     key_score, best_score):
@@ -342,10 +348,9 @@ class CheckpointHookV2(CheckpointHook):
         if best_ckpt_updated and self.last_ckpt is not None:
             self._save_checkpoint_with_step(runner, cur_time, meta)
 
-        if best_ckpt_updated:
-            best_ckpt_file = osp.join(runner.experiment_dir, 'best_checkpoint')
-            best_ckpt = getattr(self, 'best_ckpt_path', None) or getattr(self, 'best_ckpt_path_dict', None)
-            dump(best_ckpt, best_ckpt_file, indent=2)
+        best_ckpt_file = osp.join(runner.experiment_dir, 'best_checkpoint')
+        best_ckpt = getattr(self, 'best_ckpt_path', None) or getattr(self, 'best_ckpt_path_dict', None)
+        dump(best_ckpt, best_ckpt_file, indent=2)
 
     def before_val(self, runner: Runner) -> None:
         if self.save_best is not None and not self.is_init_best_ckpt:

@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument(
         '--experiment-name',
         required=False,
-        default='baseline',
+        default='debug',
         help="Experiment name, we use it as different configs"
              "Such as v1-resnet-101, the corresponding repo and dir will be created."
              " Run command with `--show-experiments` to see available experiments.")
@@ -138,8 +138,8 @@ def main():
             args.config = glob.glob(config_file, recursive=False)[0]
             logger.info(f'Continue with experiment {args.experiment_name!r}.')
         except IndexError:
-            logger.info(f"Use default config at {args.config!r}.")
             args.config = DEFAULT_CONFIG
+            logger.info(f"Use default config at {args.config!r}.")
 
     cfg = Config.fromfile(args.config)
     if args.cfg_options is not None:
