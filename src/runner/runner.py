@@ -302,18 +302,20 @@ class Runner:
 
         # lazy initialization
         training_related = [train_dataloader, train_cfg, optim_wrapper]
+        self._train_dataloader = train_dataloader
+        self._train_loop = train_cfg
+        self.optim_wrapper = optim_wrapper
+        self.auto_scale_lr = auto_scale_lr
+        self.use_new_lr = use_new_lr
         self.enough_to_train = all(item is not None for item in training_related)
         if not self.enough_to_train:
             logger.warning(
                 f"It's not enough to train because got \n"
                 f"\ttrain_dataloader={train_dataloader} \n"
                 f'\ttrain_cfg={train_cfg} \n'
-                f'\toptim_wrapper={optim_wrapper}.')
-        self._train_dataloader = train_dataloader
-        self._train_loop = train_cfg
-        self.optim_wrapper = optim_wrapper
-        self.auto_scale_lr = auto_scale_lr
-        self.use_new_lr = use_new_lr
+                f'\toptim_wrapper={optim_wrapper}.'
+            )
+            self._train_loop = None
 
         # If there is no need to adjust learning rate, momentum or other
         # parameters of optimizer, param_scheduler can be None
@@ -331,6 +333,9 @@ class Runner:
         self.param_schedulers = param_scheduler
 
         val_related = [val_dataloader, val_cfg, val_evaluator]
+        self._val_dataloader = val_dataloader
+        self._val_loop = val_cfg
+        self._val_evaluator = val_evaluator
         self.enough_to_val = all(item is not None for item in val_related)
         if not self.enough_to_val:
             logger.warning(
@@ -339,11 +344,12 @@ class Runner:
                 f'\tval_cfg={val_cfg}\n'
                 f'\tval_evaluator={val_evaluator}.'
             )
-        self._val_dataloader = val_dataloader
-        self._val_loop = val_cfg
-        self._val_evaluator = val_evaluator
+            self._val_loop = None
 
         test_related = [test_dataloader, test_cfg, test_evaluator]
+        self._test_dataloader = test_dataloader
+        self._test_loop = test_cfg
+        self._test_evaluator = test_evaluator
         self.enough_to_test = all(item is not None for item in test_related)
         if not self.enough_to_test:
             logger.warning(
@@ -352,9 +358,7 @@ class Runner:
                 f'\ttest_cfg={test_cfg}\n'
                 f'\ttest_dataloader={test_dataloader}.'
             )
-        self._test_dataloader = test_dataloader
-        self._test_loop = test_cfg
-        self._test_evaluator = test_evaluator
+            self._test_loop = None
 
         self._launcher = launcher
         if self._launcher == 'none':
@@ -779,10 +783,6 @@ class Runner:
                          env_info + '\n'
                          '\nRuntime environment:' + runtime_env_info + '\n' +
                          dash_line + '\n')
-
-        if self.cfg._cfg_dict:
-            # self.logger.info(f'Config:\n{self.cfg.pretty_text}')
-            pass
 
     def build_logger(self,
                      log_level: Union[int, str] = 'INFO',
@@ -1556,7 +1556,7 @@ class Runner:
         # However, in mmengine, if `collate_fn` is not defined in
         # dataloader_cfg, `pseudo_collate` will only convert the list of
         # samples into a dict without stacking the batch tensor.
-        collate_fn_cfg = dataloader_cfg.pop('collate_fn', dict(type='pseudo_collate'))
+        collate_fn_cfg = dataloader_cfg.pop('collate_fn', None)
         if isinstance(collate_fn_cfg, dict):
             collate_fn_type = collate_fn_cfg.pop('type')
             if isinstance(collate_fn_type, str):
@@ -1730,11 +1730,6 @@ class Runner:
             'If you want to train your model, please make sure your model '
             'has implemented `train_step`.')
 
-        if self._val_loop is not None:
-            assert hasattr(ori_model, 'val_step'), (
-                'If you want to validate your model, please make sure your '
-                'model has implemented `val_step`.')
-
         if not self.enough_to_train:
             raise RuntimeError(
                 f"It's not enough to train because got \n"
@@ -1746,6 +1741,11 @@ class Runner:
                 'initializing runner.'
             )
 
+        if self._val_loop is not None:
+            assert hasattr(ori_model, 'val_step'), (
+                'If you want to validate your model, please make sure your '
+                'model has implemented `val_step`.')
+
         self._train_loop = self.build_train_loop(self._train_loop)  # type: ignore
 
         # `build_optimizer` should be called before `build_param_scheduler`
@@ -1756,9 +1756,6 @@ class Runner:
 
         if self.param_schedulers is not None:
             self.param_schedulers = self.build_param_scheduler(self.param_schedulers)  # type: ignore
-
-        if self.enough_to_val:
-            self._val_loop = self.build_val_loop(self._val_loop)  # type: ignore
 
         self.call_hook('before_run')
 
@@ -1784,14 +1781,8 @@ class Runner:
         # Maybe compile the model according to options in self.cfg.compile
         # This must be called **AFTER** model has been wrapped.
         self._maybe_compile('train_step')
-        model = None
+
         model = self.train_loop.run()
-        try:
-            # type: ignore
-            ...
-        except KeyboardInterrupt as e:
-            logger.error("Catch error. So treat it as 'after_train'.")
-            # self.call_hook('after_train')
 
         self.call_hook('after_run')
         return model
@@ -1802,6 +1793,15 @@ class Runner:
         Returns:
             dict: A dict of metrics on validation set.
         """
+        if is_model_wrapper(self.model):
+            ori_model = self.model.module
+        else:
+            ori_model = self.model
+
+        assert hasattr(ori_model, 'val_step'), (
+            'If you want to validate your model, please make sure your model '
+            'has implemented `val_step`.')
+
         if not self.enough_to_val:
             raise RuntimeError(
                 f"It's not enough to val because got \n"
@@ -1828,6 +1828,15 @@ class Runner:
         Returns:
             dict: A dict of metrics on testing set.
         """
+        if is_model_wrapper(self.model):
+            ori_model = self.model.module
+        else:
+            ori_model = self.model
+
+        assert hasattr(ori_model, 'test_step'), (
+            'If you want to test your model, please make sure your model '
+            'has implemented `test_step`.')
+
         if not self.enough_to_test:
             self.logger.warning(
                 f"It's not enough to test because got \n"

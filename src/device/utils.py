@@ -3,6 +3,7 @@
 #  Minh NGUYEN <vnguyen9@lakeheadu.ca>
 #
 import os
+import platform
 from typing import Optional
 
 import torch
@@ -83,24 +84,32 @@ def is_npu_support_full_precision() -> bool:
     ) >= version_of_support_full_precision
 
 
-DEVICE = 'cpu'
-CPU = 'cpu'
-if is_npu_available():
-    DEVICE = 'npu'
-elif is_cuda_available():
-    DEVICE = 'cuda'
-elif is_mlu_available():
-    DEVICE = 'mlu'
-elif is_mps_available():
-    DEVICE = 'mps'
-elif is_dipu_available():
-    DEVICE = 'dipu'
-
-
-def get_device() -> str:
+def get_device():
     """Returns the currently existing device type.
+    Based on platform.
 
-    Returns:
-        str: cuda | npu | mlu | mps | cpu.
-    """
-    return CPU
+      Returns:
+          str: cuda | npu | mlu | mps | cpu.
+      """
+    system = platform.system()
+    prefer_mps = os.getenv("USE_MPS", "0") == "1"
+
+    # macOS: prioritize CPU first, as MSP may not support some ops
+    if system == "Darwin":
+        if torch.cuda.is_available():
+            return "cuda"
+        if prefer_mps and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    # Linux/Windows
+    if is_npu_available():
+        return "npu"
+    if torch.cuda.is_available():
+        return "cuda"
+    if is_mlu_available():
+        return "mlu"
+    if is_dipu_available():
+        return "dipu"
+
+    return "cpu"

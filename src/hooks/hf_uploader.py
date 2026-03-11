@@ -44,6 +44,7 @@ class CheckpointUploader(Hook):
         self.hfapi = HfApi(token=token)
         self.hffs = HfFileSystem(token=token)
         self.repo_id = repo_id
+
         self.previous_last_ckpt = ''
         self.previous_best_ckpt = dict()
 

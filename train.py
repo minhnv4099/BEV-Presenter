@@ -4,6 +4,7 @@
 #
 from __future__ import annotations
 
+import contextlib
 import glob
 import sys
 sys.path.append('.')
@@ -35,6 +36,10 @@ def parse_args():
         '--config',
         help='config file path, locate in ./configs/',
         default=None)
+    parser.add_argument(
+        '--reuse-config',
+        help="Resume config from experiment dir.",
+        action='store_true')
     parser.add_argument(
         '--work-dir',
         help='the dir to save logs and checkpoints',
@@ -120,6 +125,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+
     if args.show_experiments:
         experiments = list(map(lambda x: osp.basename(x), filter(lambda x: osp.isdir(x), glob.glob(rf"{args.work_dir}/*"))))
         logger.info(f"Available experiments in: {experiments}.")
@@ -131,15 +137,14 @@ def main():
             "It's highly recommended to resume config file from experiment dir"
             " to continue training with consistent configs/hyperparameters."
         )
-
-    if not args.config:
-        try:
+    elif args.reuse_config:
+        with contextlib.suppress(BaseException):
             config_file = f"{args.work_dir}/{args.experiment_name}/*.py"
             args.config = glob.glob(config_file, recursive=False)[0]
             logger.info(f'Continue with experiment {args.experiment_name!r}.')
-        except IndexError:
-            args.config = DEFAULT_CONFIG
-            logger.info(f"Use default config at {args.config!r}.")
+    elif not args.config:
+        args.config = DEFAULT_CONFIG
+        logger.info(f"Use default config at {args.config!r}.")
 
     cfg = Config.fromfile(args.config)
     if args.cfg_options is not None:

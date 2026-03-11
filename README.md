@@ -1,19 +1,12 @@
 # The project of COMP-5421: BEV Presenter.
 
 
-# Installation
-The project requires python==3.10
+## Environment setting
 ```bash
-uv venv --python 3.10
+bash scrtips/setup_env.sh
 ```
 
-Use **uv** to install dependencies in [uv.lock](uv.lock).
-```bash
-uv pip install -e .
-```
-## NOTE
-Should run any file by ```uv run ...```.
-
+## Token
 Get token [here](https://docs.google.com/document/d/129TDtn83w0sZky860JnfVmeleP7Bv74rjDI1J3dz83M/edit?usp=sharing).
 Then paste to `~/.cache/huggingface/token` file (in Linux) or set environment variable ``HF_TOKEN`` to access [organization repository](https://huggingface.co/5421Project). 
 

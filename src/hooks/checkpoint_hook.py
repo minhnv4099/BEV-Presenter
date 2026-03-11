@@ -92,7 +92,7 @@ class CheckpointHookV2(CheckpointHook):
 
         self.key_indicators = key_indicators
 
-    def _ini_best_ckpt(self, runner: Runner):
+    def _init_best_ckpt(self, runner: Runner):
         if self.is_init_best_ckpt:
             return
 
@@ -161,7 +161,7 @@ class CheckpointHookV2(CheckpointHook):
         runner.logger.info(f'Checkpoints will be saved to {self.out_dir!r} {frequency}.')
 
         if self.save_best is not None and not self.is_init_best_ckpt:
-            self._ini_best_ckpt(runner)
+            self._init_best_ckpt(runner)
             runner.logger.info(f'The best checkpoint will be saved to {self.out_dir!r} '
                                f'based on {self.key_indicators} with rules {self.rules} {frequency}.')
 
@@ -246,14 +246,26 @@ class CheckpointHookV2(CheckpointHook):
         if not self.save_best:
             return
 
-        if self.by_epoch:
-            ckpt_filename = self.filename_tmpl.format(runner.epoch)
-            cur_type, cur_time = 'epoch', runner.epoch
-        else:
-            ckpt_filename = self.filename_tmpl.format(runner.iter)
-            cur_type, cur_time = 'iter', runner.iter
+        runner.logger.info("Saving best checkpoint...")
+        # as we also track best checkpoint based on 'loss' after 'after_epoch/iter_train'
+        # when the _iter/_epoch don't plus 1, so plus 1 for being reasonable
+        # other metrics (in validation) use normally, because _iter/_epoch added 1
 
-        meta = dict(epoch=runner.epoch, iter=runner.iter)
+        if 'loss' in metrics:
+            epoch = runner.epoch + 1
+            iteration = runner.iter + 1
+        else:
+            epoch = runner.epoch
+            iteration = runner.iter
+
+        if self.by_epoch:
+            ckpt_filename = self.filename_tmpl.format(epoch)
+            cur_type, cur_time = 'epoch', epoch
+        else:
+            ckpt_filename = self.filename_tmpl.format(iteration)
+            cur_type, cur_time = 'iter', iteration
+
+        meta = dict(epoch=epoch, iter=iteration)
 
         # handle auto in self.key_indicators and self.rules before the loop
         if 'auto' in self.key_indicators:
@@ -281,22 +293,27 @@ class CheckpointHookV2(CheckpointHook):
                 best_score = self.init_value_map[rule]
             else:
                 best_score = runner.message_hub.get_info(best_score_key)
+                # check if best ckpt path is in local
+                # best score exists while the corresponding path is not
+                # which is useless, so reset it
+                if (best_ckpt_path is None or
+                        (not self.file_backend.isfile(best_ckpt_path) and
+                         not self.file_backend.isdir(best_ckpt_path))):
+                    runner.logger.info(f"Reset best checkpoint of {key_indicator}")
+                    best_score = self.init_value_map[rule]
 
-            # check if best ckpt path is in local
-            if (best_ckpt_path is None
-                    or not self.file_backend.isfile(best_ckpt_path)
-                    or not self.file_backend.isdir(best_ckpt_path)):
-                best_score = self.init_value_map[rule]
-
+            # no better skip rest
             if key_score is None or not self.is_better_than[key_indicator](
                     key_score, best_score):
                 continue
 
             best_ckpt_updated = True
 
+            # update best score
             best_score = key_score
             runner.message_hub.update_info(best_score_key, best_score)
 
+            # remove previous best checkpoint
             if best_ckpt_path and is_main_process():
                 is_removed = False
                 if self.file_backend.isfile(best_ckpt_path):
@@ -309,12 +326,14 @@ class CheckpointHookV2(CheckpointHook):
 
                 if is_removed:
                     runner.logger.info(
-                        f'The previous best checkpoint {best_ckpt_path} '
+                        f'The previous best checkpoint {best_ckpt_path!r} '
                         'is removed')
 
             best_ckpt_name = f'best_{key_indicator}_{ckpt_filename}'
             # Replace illegal characters for filename with `_`
             best_ckpt_name = best_ckpt_name.replace('/', '_')
+
+            # update best checkpoint path
             if len(self.key_indicators) == 1:
                 self.best_ckpt_path = self.file_backend.join_path(  # type: ignore # noqa: E501
                     self.out_dir, best_ckpt_name)
@@ -338,24 +357,28 @@ class CheckpointHookV2(CheckpointHook):
 
             runner.logger.info(
                 f'The best checkpoint with {best_score:0.4f} {key_indicator} '
-                f'at {cur_time} {cur_type} is saved to {best_ckpt_name}.')
+                f'at {cur_time} {cur_type} is saved to {best_ckpt_name!r}.')
 
         # save checkpoint again to update the best_score and best_ckpt stored
         # in message_hub because the checkpoint saved in `after_train_epoch`
         # or `after_train_iter` stage only keep the previous best checkpoint
         # not the current best checkpoint which causes the current best
         # checkpoint can not be removed when resuming training.
-        if best_ckpt_updated and self.last_ckpt is not None:
+        if ('loss' not in metrics and
+                best_ckpt_updated and
+                self.last_ckpt is not None):
+            runner.logger.info(f"Resaving checkpoint at {cur_time} {cur_type}...")
             self._save_checkpoint_with_step(runner, cur_time, meta)
 
         best_ckpt_file = osp.join(runner.experiment_dir, 'best_checkpoint')
         best_ckpt = getattr(self, 'best_ckpt_path', None) or getattr(self, 'best_ckpt_path_dict', None)
         dump(best_ckpt, best_ckpt_file, indent=2)
+        logger.info(best_ckpt)
 
     def before_val(self, runner: Runner) -> None:
         if self.save_best is not None and not self.is_init_best_ckpt:
             frequency = self._get_frequency()
-            self._ini_best_ckpt(runner)
+            self._init_best_ckpt(runner)
             runner.logger.info(f'The best checkpoint will be saved to {self.out_dir!r} '
                                f'based on {self.key_indicators} with rules {self.rules} {frequency}.')
 

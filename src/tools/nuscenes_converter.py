@@ -56,7 +56,6 @@ def create_nuscenes_infos(root_path: str,
         max_sweeps (int): Max number of sweeps.
             Default: 10
     """
-    logger.info(f"{root_path}, {version}")
     nusc = NuScenes(version=version, dataroot=root_path, verbose=True, save_reverse=True)
     nusc_can_bus = NuScenesCanBus(dataroot=can_bus_root_path)
 
@@ -79,10 +78,10 @@ def create_nuscenes_infos(root_path: str,
     available_scenes = get_available_scenes(nusc)
     available_scene_names = [s['name'] for s in available_scenes]
 
-    # name
+    # name-based scenes
     train_scenes = list(filter(lambda x: x in available_scene_names, train_scenes))
     val_scenes = list(filter(lambda x: x in available_scene_names, val_scenes))
-    # scene
+    # token-based scenes
     train_scenes = set([
         available_scenes[available_scene_names.index(s)]['token']
         for s in train_scenes
@@ -162,10 +161,10 @@ def get_available_scenes(nusc: NuScenes):
         # while has_more_frames:
         lidar_path = nusc.get_sample_data_path(sd_rec['token'])
         lidar_path = str(lidar_path)
-        # if os.getcwd() in lidar_path:
-                # path from lyftdataset is absolute path
-            # lidar_path = lidar_path.split(f'{os.getcwd()}/')[-1]
-                # relative path
+        if os.getcwd() in lidar_path:
+            # path from lyftdataset is absolute path
+            lidar_path = lidar_path.split(f'{os.getcwd()}/')[-1]
+            # relative path
         if osp.isfile(lidar_path):
             available_scenes.append(scene)
 
@@ -247,7 +246,7 @@ def _fill_trainval_infos(nusc: NuScenes,
         for cam in camera_types:
             cam_token = sample['data'][cam]
             cam_path, _, cam_intrinsic = nusc.get_sample_data(cam_token)
-            cam_info = obtain_sensor2top(nusc, cam_token, l2e_t, l2e_r_mat, e2g_t, e2g_r_mat, cam)
+            cam_info = obtain_sensor2lidar(nusc, cam_token, l2e_t, l2e_r_mat, e2g_t, e2g_r_mat, cam)
             cam_info.update(cam_intrinsic=cam_intrinsic)
             info['cams'].update({cam: cam_info})
 
@@ -256,7 +255,7 @@ def _fill_trainval_infos(nusc: NuScenes,
         sweeps = []
         while len(sweeps) < max_sweeps:
             if sd_rec['prev'] != '':
-                sweep = obtain_sensor2top(nusc, sd_rec['prev'], l2e_t, l2e_r_mat, e2g_t, e2g_r_mat, 'lidar')
+                sweep = obtain_sensor2lidar(nusc, sd_rec['prev'], l2e_t, l2e_r_mat, e2g_t, e2g_r_mat, 'lidar')
                 sweeps.append(sweep)
                 sd_rec = nusc.get('sample_data', sd_rec['prev'])
             else:
@@ -336,13 +335,13 @@ def _get_can_bus_info(nusc, nusc_can_bus, sample):
     return np.array(can_bus)
 
 
-def obtain_sensor2top(nusc,
-                      sensor_token,
-                      l2e_t,
-                      l2e_r_mat,
-                      e2g_t,
-                      e2g_r_mat,
-                      sensor_type='lidar'):
+def obtain_sensor2lidar(nusc,
+                        sensor_token,
+                        l2e_t,
+                        l2e_r_mat,
+                        e2g_t,
+                        e2g_r_mat,
+                        sensor_type='lidar'):
     """Obtain the info with RT matric from general sensor to Top LiDAR.
 
     Args:
@@ -361,8 +360,7 @@ def obtain_sensor2top(nusc,
         sweep (dict): Sweep information after transformation.
     """
     sd_rec = nusc.get('sample_data', sensor_token)
-    cs_record = nusc.get('calibrated_sensor',
-                         sd_rec['calibrated_sensor_token'])
+    cs_record = nusc.get('calibrated_sensor', sd_rec['calibrated_sensor_token'])
     pose_record = nusc.get('ego_pose', sd_rec['ego_pose_token'])
     data_path = str(nusc.get_sample_data_path(sd_rec['token']))
     if os.getcwd() in data_path:  # path from lyftdataset is absolute path
@@ -388,9 +386,9 @@ def obtain_sensor2top(nusc,
     l2e_r_s_mat = Quaternion(l2e_r_s).rotation_matrix
     e2g_r_s_mat = Quaternion(e2g_r_s).rotation_matrix
     R = (l2e_r_s_mat.T @ e2g_r_s_mat.T) @ (
-        np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(l2e_r_mat).T)
+            np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(l2e_r_mat).T)
     T = (l2e_t_s @ e2g_r_s_mat.T + e2g_t_s) @ (
-        np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(l2e_r_mat).T)
+            np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(l2e_r_mat).T)
     T -= e2g_t @ (np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(l2e_r_mat).T
                   ) + l2e_t @ np.linalg.inv(l2e_r_mat).T
     sweep['sensor2lidar_rotation'] = R.T  # points @ R.T + T
@@ -592,7 +590,7 @@ def get_2d_boxes(nusc,
 
 
 def post_process_coords(
-    corner_coords: List, imsize: Tuple[int, int] = (1600, 900)
+        corner_coords: List, imsize: Tuple[int, int] = (1600, 900)
 ) -> Union[Tuple[float, float, float, float], None]:
     """Get the intersection of the convex hull of the reprojected bbox corners
     and the image canvas, return None if no intersection.

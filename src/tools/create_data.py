@@ -37,6 +37,7 @@ def nuscenes_data_prep(root_path: str,
         out_dir (str): Output directory of the groundtruth database info.
         max_sweeps (int): Number of input consecutive frames. Default: 10
     """
+    logger.info(f"Creating info for dataset {dataset_name} from {root_path!r} with version {version!r}.")
     nuscenes_converter.create_nuscenes_infos(
         root_path, out_dir, can_bus_root_path, info_prefix, version=version, max_sweeps=max_sweeps)
 
@@ -59,44 +60,42 @@ def get_args():
         'dataset',
         metavar='data-name',
         default='nuscenes',
-        help='name of the dataset'
-    )
+        choices=['nuscenes', ],
+        help='Name of the dataset')
     parser.add_argument(
         '--root-path',
-        type=str,
         default='data/nuscenes/',
-        help='specify the root path of dataset')
+        help='Path to dataset')
     parser.add_argument(
         '--canbus',
-        type=str,
-        default='./data/nuscenes/can_bus',
-        help='specify the root path of nuScenes canbus')
+        default='data/nuscenes/can_bus',
+        help='Path to can bus data')
     parser.add_argument(
         '--version',
-        type=str,
         default='v1.0-mini',
+        choices=['v1.0-mini'],
         required=False,
-        help='specify the dataset version. Default to v1.0-mini')
+        help='The dataset version. Default to v1.0-mini.')
     parser.add_argument(
         '--max-sweeps',
         type=int,
         default=10,
         required=False,
-        help='specify sweeps of lidar per example')
+        help='Sweeps of lidar per example')
     parser.add_argument(
         '--out-dir',
-        type=str,
         default=None,
         required=False,
-        help='dir to save files')
-    parser.add_argument('--extra-tag', type=str, default='nuscenes', help='prefix of paths what would be saved')
-    parser.add_argument('--workers', type=int, default=4, help='number of threads to be used')
+        help='Dir to save files.')
+    parser.add_argument('--extra-tag', type=str, default='nuscenes', help='Prefix of paths what would be saved')
+    parser.add_argument('--workers', type=int, default=4, help='Number of threads to be used')
 
     return parser.parse_args()
 
 
 def main():
     args = get_args()
+
     if not args.root_path.rstrip(osp.sep).endswith(args.version):
         root_path = str(os.path.join(args.root_path, args.version))
 
@@ -124,12 +123,11 @@ def main():
             out_dir=args.out_dir,
             max_sweeps=args.max_sweeps)
     elif args.dataset == 'nuscenes' and args.version == 'v1.0-mini':
-        train_version = f'{args.version}'
         nuscenes_data_prep(
             root_path=root_path,
             can_bus_root_path=args.canbus,
             info_prefix=args.extra_tag,
-            version=train_version,
+            version=args.version,
             dataset_name='NuScenesDataset',
             out_dir=args.out_dir,
             max_sweeps=args.max_sweeps)

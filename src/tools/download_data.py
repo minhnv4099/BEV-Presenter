@@ -41,7 +41,10 @@ def get_args():
         '--token',
         required=False,
         default=None,
-        help='Token to access the repo.')
+        help='Token to access the repo. The token can be used through 3 ways:'
+             '1. (Highly recommend) Past token to file `~/.cache/huggingface/token` (in Linux)\n'
+             '2. Set to environment variable `HF_TOKEN`\n'
+             '3. Pass directly by command.')
     parser.add_argument(
         '--out-dir',
         default=None,
@@ -49,7 +52,7 @@ def get_args():
     parser.add_argument(
         '--cache-dir',
         default=None,
-        help="Directory to cache files/folders.")
+        help="Directory to cache downloaded files/folders.")
     parser.add_argument(
         '--version',
         default='v1.0-mini',
@@ -64,29 +67,29 @@ def get_args():
 
 
 def main(args: Namespace):
-    if args.out_dir is None:
-        args.out_dir = DEFAULT_DATA_DIR
-
+    args.out_dir = args.out_dir or DEFAULT_DATA_DIR
     flag_out_dir = osp.join(args.out_dir, args.flag)
     os.makedirs(flag_out_dir, exist_ok=True)
 
-    token = args.token or huggingface_hub.get_token()
+    args.token = args.token or huggingface_hub.get_token()
 
-    if token is None:
+    if args.token is None:
         token_link = 'https://docs.google.com/document/d/129TDtn83w0sZky860JnfVmeleP7Bv74rjDI1J3dz83M/edit?usp=sharing'
         logger.error(
             f'Used token in {token_link!r} to access '
             f'repo https://huggingface.co/datasets/{args.repo}. '
-            'By passing token to functions or '
-            'pasting it to file `~/.cache/huggingface/token`.')
-        assert False
-    args.token = token
+            'The token can be used through 3 ways: \n'
+            '1. (Highly recommend) Past token to file `~/.cache/huggingface/token` (in Linux)\n'
+            '2. Set to environment variable `HF_TOKEN`\n'
+            '3. Pass directly by command.')
+
+        assert False, "Do not provide token access to the repo."
 
     msg = (
-        "Preparing download data:"
+        "Preparing downloading data:"
         f"\n\tfrom repo: {args.repo},"
         f"\n\tversion: {args.version},"
-        f"\n\tand saved in: {flag_out_dir}."
+        f"\n\tsaved in: {flag_out_dir}."
     )
     logger.info(msg)
 
