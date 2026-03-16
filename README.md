@@ -1,9 +1,13 @@
 # The project of COMP-5421: BEV Presenter.
 
 
-## Environment setting
+## Create virtual environment
 ```bash
-bash scrtips/setup_env.sh
+uv venv --python 3.10.0
+```
+## Install dependencies
+```bash
+uv pip install -e .
 ```
 
 ## Token
@@ -19,6 +23,8 @@ uv run src/tools/download_data.py \
     --version v1.0-mini \
     --flag nuscenes
 ```
+From here, can visualize data sample (see [visualize.ipynb](notebooks/visualize.ipynb)).
+
 Run command to prepare metadata
 
 ```bash
