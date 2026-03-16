@@ -29,7 +29,6 @@ logger = getLogger(__name__)
 
 @HOOKS.register_module()
 class CheckpointUploader(Hook):
-
     priority = "VERY_LOW"
 
     def __init__(self,
@@ -96,6 +95,7 @@ class CheckpointUploader(Hook):
                 exist_ok=True,
             )
             time.sleep(2.0)
+            runner.logger.info(f"Created {self.repo_id!r} to save checkpoints (see {self.repo_url!r}).")
 
         frequency = f"after every {self.interval} {{type}}"
         if self.by_epoch:
@@ -106,7 +106,7 @@ class CheckpointUploader(Hook):
         runner.logger.info(f'Checkpoints will be pushed to repo {self.repo_url!r} {frequency}.')
 
     def after_train(self, runner: Runner) -> None:
-        runner.logger.info("Pushing visualizing data and safetensors to repo...")
+        runner.logger.info("Pushing visualizing data and safetensors to repo after training...")
         self._push_tensorboard(runner)
         self._push_safetensors(runner)
 
@@ -123,8 +123,8 @@ class CheckpointUploader(Hook):
         # 1. every ``self.interval`` epochs which start at ``self.save_begin``
         # 2. reach the last epoch of training
         should_upload = (
-                self.every_n_epochs(runner, self.interval, self.save_begin) or
-                (self.save_last and self.is_last_train_epoch(runner))
+                self.every_n_epochs(runner, self.interval, self.save_begin)
+                or (self.save_last and self.is_last_train_epoch(runner))
         )
         if should_upload:
             runner.logger.info(f'Pushing checkpoint at {runner.epoch + 1} epochs...')
@@ -150,8 +150,8 @@ class CheckpointUploader(Hook):
         # 1. every ``self.interval`` iterations which start at ``self.save_begin``
         # 2. reach the last iteration of training
         should_upload = (
-                self.every_n_train_iters(runner, self.interval, self.save_begin) or
-                (self.save_last and self.is_last_train_iter(runner))
+                self.every_n_train_iters(runner, self.interval, self.save_begin)
+                or (self.save_last and self.is_last_train_iter(runner))
         )
         if should_upload:
             runner.logger.info(f'Pushing checkpoint at {runner.iter + 1} steps...')
@@ -166,27 +166,36 @@ class CheckpointUploader(Hook):
         prev_last_ckpt_path = osp.join(osp.join(runner.experiment_dir, 'prev_last_checkpoint'))
         if runner.need_resume:
             if osp.isfile(prev_last_ckpt_path):
+                # get files recently pushed
                 self.previous_last_ckpt = load(prev_last_ckpt_path, file_format='json')
 
+        # the last (recently saved) checkpoint
         last_ckpt = find_latest_checkpoint(runner.experiment_dir)
 
         if last_ckpt is not None and osp.isfile(last_ckpt):
-            logger.info("Pushing last checkpoint...")
             if last_ckpt != self.previous_last_ckpt:
+                # push last checkpoint
                 self._write_content(
                     content=last_ckpt,
                     path_in_repo=osp.basename(last_ckpt))
+                runner.logger.info(f"Pushed last checkpoint {last_ckpt!r} to repo")
 
-                self._delete_remote_file(osp.basename(self.previous_last_ckpt))
+                # delete remote files
+                if self._delete_remote_file(remote_last_ckpt := osp.basename(self.previous_last_ckpt)):
+                    runner.logger.info(f"Removed {remote_last_ckpt!r} from repo")
+                else:
+                    # logger.info(f"{remote_last_ckpt!r} is not in repo")
+                    ...
                 self.previous_last_ckpt = last_ckpt
 
-            # write last checkpoint meta
-            self._write_content(
-                content=osp.basename(last_ckpt),
-                path_in_repo="last_checkpoint",
-                content_type='str')
+                # write last checkpoint meta
+                self._write_content(
+                    content=osp.basename(last_ckpt),
+                    path_in_repo="last_checkpoint",
+                    content_type='str')
 
-        dump(self.previous_last_ckpt, prev_last_ckpt_path, file_format='json')
+                # save files that were pushed to delete later
+                dump(self.previous_last_ckpt, prev_last_ckpt_path, file_format='json')
 
     def _push_best_ckpt(self, runner: Runner):
         prev_best_ckpt_path = osp.join(osp.join(runner.experiment_dir, 'prev_best_checkpoint'))
@@ -195,21 +204,28 @@ class CheckpointUploader(Hook):
                 self.previous_best_ckpt = load(prev_best_ckpt_path, file_format='json')
 
         best_ckpt = find_best_checkpoint(runner.experiment_dir)
+        updated_ckpt = False
 
         if best_ckpt is not None:
-            logger.info("Pushing best checkpoint...")
             if isinstance(best_ckpt, dict):
                 for ckpt_type, ckpt_path in best_ckpt.items():
                     if ckpt_path is None or not osp.isfile(ckpt_path):
                         continue
 
                     if best_ckpt[ckpt_type] != self.previous_best_ckpt.get(ckpt_type):
+                        updated_ckpt = True
                         self._write_content(
                             content=best_ckpt[ckpt_type],
                             path_in_repo=osp.basename(ckpt_path))
+                        runner.logger.info(f"Pushed best checkpoint {osp.basename(ckpt_path)!r} of [{ckpt_type}]...")
 
-                        self._delete_remote_file(
-                            osp.basename(self.previous_best_ckpt.get(ckpt_type, '')))
+                        if self._delete_remote_file(
+                                remote_last_ckpt := osp.basename(self.previous_best_ckpt.get(ckpt_type, ''))):
+                            runner.logger.info(f"Removed {remote_last_ckpt!r} from repo")
+                        else:
+                            # logger.info(f"{remote_last_ckpt!r} is not in repo")
+                            ...
+
                         self.previous_best_ckpt[ckpt_type] = ckpt_path
 
                     best_ckpt[ckpt_type] = osp.basename(best_ckpt[ckpt_type])
@@ -221,13 +237,14 @@ class CheckpointUploader(Hook):
 
                 best_ckpt = osp.basename(best_ckpt)
 
+        if updated_ckpt:
             # write best checkpoint meta
             self._write_content(
                 content=json.dumps(best_ckpt, indent=2),
                 path_in_repo='best_checkpoint',
                 content_type='str')
 
-        dump(self.previous_best_ckpt, prev_best_ckpt_path, file_format='json')
+            dump(self.previous_best_ckpt, prev_best_ckpt_path, file_format='json')
 
     def _push_checkpoint(self, runner: Runner):
         """Push last and best checkpoint to hub."""
@@ -301,10 +318,12 @@ class CheckpointUploader(Hook):
         )
 
     def _delete_remote_file(self, filename: str):
-        with suppress(Exception, BaseException):
+        with suppress(BaseException):
             self.hfapi.delete_file(
                 path_in_repo=filename,
                 repo_id=self.repo_id,
                 repo_type='model',
                 token=self.token
             )
+            return True
+        return False

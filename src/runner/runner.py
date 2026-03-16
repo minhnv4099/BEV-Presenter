@@ -1414,7 +1414,10 @@ class Runner:
         """
         if isinstance(evaluator, Evaluator):
             return evaluator
+
         elif isinstance(evaluator, dict):
+            for metric in evaluator.get("metrics", []):
+                metric['jsonfile_prefix'] = self.log_dir
             # if `metrics` in dict keys, it means to build customized evaluator
             if 'metrics' in evaluator:
                 evaluator.setdefault('type', 'Evaluator')
@@ -1747,6 +1750,7 @@ class Runner:
                 'model has implemented `val_step`.')
 
         self._train_loop = self.build_train_loop(self._train_loop)  # type: ignore
+        self._val_loop = self.build_val_loop(self._val_loop)
 
         # `build_optimizer` should be called before `build_param_scheduler`
         #  because the latter depends on the former
@@ -1887,8 +1891,13 @@ class Runner:
                resume_param_scheduler: bool = True,
                map_location: Union[str, Callable] = 'default'
                ) -> None:
-        """Resume model from checkpoint.
-        Load from local first. If not exist, use ``given_checkpoint`` then.
+        """Resume state dict, training settings from checkpoint including:
+            - model state dict
+            - epoch/step
+            - optimizer
+            - dataset meta/info meta
+            - message hub
+        Load from local first. If not exist, the checkpoint may be resumed by hooks later.
 
         Args:
             filename (str): Accept local filepath, URL, ``torchvision://xxx``,
@@ -1901,6 +1910,7 @@ class Runner:
                 specifying how to remap storage locations.
                 Defaults to 'default'.
         """
+        # resume state dict
         if map_location == 'default':
             device = get_device()
             checkpoint = self.load_checkpoint(filename, map_location=device)
@@ -1910,8 +1920,9 @@ class Runner:
         if checkpoint is None:
             return None
 
-        self.logger.info(f'Auto resumed from the checkpoint {filename!r}.')
+        self.logger.info(f'Auto resumed training settings from the checkpoint {filename!r}.')
 
+        # resume epoch and iter (current)
         self.train_loop._epoch = checkpoint['meta']['epoch']
         self.train_loop._iter = checkpoint['meta']['iter']
 
@@ -1940,7 +1951,7 @@ class Runner:
                         'leaning rate will be adjusted according to the '
                         f'setting in auto_scale_lr={self.auto_scale_lr}')
 
-        # resume random seed
+        # resume random seed, to get reproducibility
         resumed_seed = checkpoint['meta'].get('seed', None)
         current_seed = self._randomness_cfg.get('seed')
         if resumed_seed is not None and resumed_seed != current_seed:
@@ -1964,7 +1975,7 @@ class Runner:
                 'different from the current training dataset, please '
                 'check the correctness of the checkpoint or the training '
                 'dataset.')
-
+        # resume message hub
         self.message_hub.load_state_dict(checkpoint['message_hub'])
 
         # resume optimizer
@@ -1979,6 +1990,7 @@ class Runner:
                 '`resume_param_scheduler` is True but `self.param_schedulers` '
                 'is None, so skip resuming parameter schedulers')
             resume_param_scheduler = False
+
         if 'param_schedulers' in checkpoint and resume_param_scheduler:
             self.param_schedulers = self.build_param_scheduler(  # type: ignore
                 self.param_schedulers)  # type: ignore
@@ -2002,7 +2014,8 @@ class Runner:
                         map_location: Union[str, Callable] = 'cpu',
                         strict: bool = False,
                         revise_keys: list = [(r'^module.', '')]):
-        """Load checkpoint from given ``filename``.
+        """Load state dict (weights) from checkpoint from given ``filename``
+        to model.
 
         Args:
             filename (str): Accept local filepath, URL, ``torchvision://xxx``,

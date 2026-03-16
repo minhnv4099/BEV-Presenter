@@ -103,7 +103,7 @@ class MyFormatter(logging.Formatter):
     _color_mapping: dict = dict(
         ERROR='red', WARNING='yellow', INFO='white', DEBUG='green')
 
-    def __init__(self, color: bool = True, blink: bool = False, **kwargs):
+    def __init__(self, color: bool = False, blink: bool = False, **kwargs):
         super().__init__(**kwargs)
         assert not (not color and blink), (
             'blink should only be available when color is True')
@@ -241,7 +241,7 @@ class MMLogger(Logger, ManagerMixin):
         # `StreamHandler` record month, day, hour, minute, and second
         # timestamp.
         stream_handler.setFormatter(
-            MyFormatter(color=True, datefmt='%m/%d/%y %H:%M:%S'))
+            MyFormatter(color=False, datefmt='%m/%d/%y %H:%M:%S'))
         # Only rank0 `StreamHandler` will log messages below error level.
         if global_rank == 0:
             stream_handler.setLevel(log_level)
@@ -277,7 +277,7 @@ class MMLogger(Logger, ManagerMixin):
                 # and second timestamp. file_handler will only record logs
                 # without color to avoid garbled code saved in files.
                 file_handler.setFormatter(
-                    MyFormatter(color=True, datefmt='%Y/%m/%d %H:%M:%S'))
+                    MyFormatter(color=False, datefmt='%Y/%m/%d %H:%M:%S'))
                 file_handler.setLevel(log_level)
                 file_handler.addFilter(FilterDuplicateWarning(logger_name))
                 self.handlers.append(file_handler)

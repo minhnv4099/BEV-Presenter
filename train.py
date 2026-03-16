@@ -189,7 +189,7 @@ def main():
     # ========================================================================
     cfg.resume = args.resume
     cfg.load_from = args.load_from
-    cfg.experiment_name = args.experiment_name
+    cfg.experiment_name = args.experiment_name.replace('/', '_')
 
     # Modify config before instantiating runner
     for metric in cfg.val_evaluator.metrics:

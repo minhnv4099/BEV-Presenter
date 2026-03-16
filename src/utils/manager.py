@@ -104,7 +104,7 @@ class ManagerMixin(metaclass=ManagerMeta):
         _acquire_lock()
         assert isinstance(name, str), \
             f'type of name should be str, but got {type(cls)}'
-        instance_dict = cls._instance_dict  # type: ignore
+        instance_dict = cls._instance_dict
         # Get the instance by name.
         if name not in instance_dict:
             instance = cls(name=name, **kwargs)  # type: ignore
@@ -120,7 +120,7 @@ class ManagerMixin(metaclass=ManagerMeta):
 
     @classmethod
     def get_current_instance(cls):
-        """Get latest created instance.
+        """Get the latest created instance.
 
         Before calling ``get_current_instance``, The subclass must have called
         ``get_instance(xxx)`` at least once.

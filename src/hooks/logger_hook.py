@@ -1,9 +1,12 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+#
+#  Copyright (c) 2026
+#  Minh NGUYEN <vnguyen9@lakeheadu.ca>
+#
 import logging
 import os
 import os.path as osp
 from collections import OrderedDict
-from typing import Dict, Optional, Sequence, Union
+from typing import Dict, Optional, Sequence, Union, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -11,15 +14,18 @@ import re
 
 from mmengine.fileio import dump
 from mmengine.utils import scandir
-from mmengine.hooks import LoggerHook
+from mmengine.hooks import LoggerHook as MMLogerHook
 from src.registry import HOOKS
+
+if TYPE_CHECKING:
+    from src.runner import Runner
 
 DATA_BATCH = Optional[Union[dict, tuple, list]]
 SUFFIX_TYPE = Union[Sequence[str], str]
 
 
 @HOOKS.register_module(force=True)
-class LoggerHook(LoggerHook):
+class LoggerHook(MMLogerHook):
     """Collect logs from different components of ``Runner`` and write them to
     terminal, JSON file, tensorboard and wandb .etc.
 
@@ -72,11 +78,11 @@ class LoggerHook(LoggerHook):
     """
     priority = 'BELOW_NORMAL'
 
-    def __init__(self, log_exact_outputs: bool = True, **kwargs):
+    def __init__(self, log_exact_outputs: bool = False, **kwargs):
         super().__init__(**kwargs)
         self.log_exact_outputs = log_exact_outputs
 
-    def before_run(self, runner) -> None:
+    def before_run(self, runner: "Runner") -> None:
         """Infer ``self.file_client`` from ``self.out_dir``. Initialize the
         ``self.start_iter`` and record the meta information.
 
@@ -95,7 +101,7 @@ class LoggerHook(LoggerHook):
         self.json_log_path = f'{runner.timestamp}.json'
 
     def after_train_iter(self,
-                         runner,
+                         runner: "Runner",
                          batch_idx: int,
                          data_batch: DATA_BATCH = None,
                          outputs: Optional[dict] = None) -> None:
@@ -108,9 +114,8 @@ class LoggerHook(LoggerHook):
             outputs (dict, optional): Outputs from model.
         """
         # Print experiment name every n iterations.
-        if self.every_n_train_iters(
-                runner, self.interval_exp_name) or (self.end_of_epoch(
-                    runner.train_dataloader, batch_idx)):
+        if (self.every_n_train_iters(runner, self.interval_exp_name)
+                or (self.end_of_epoch(runner.train_dataloader, batch_idx))):
             exp_info = f'Exp name: {runner.experiment_name}'
             runner.logger.info(exp_info)
 

@@ -168,8 +168,8 @@ class NuScenesMetric(BaseMetric):
             result['bboxes_3d'] = data_sample['bboxes_3d']
             result['scores_3d'] = data_sample['scores_3d']
             result['labels_3d'] = data_sample['labels_3d']
-            result['sample_idx'] = img_meta['frame_idx']
             result['attr_labels'] = data_sample['labels_3d']
+            result['sample_idx'] = img_meta['frame_idx']
 
             self.results.append(result)
 
@@ -195,13 +195,13 @@ class NuScenesMetric(BaseMetric):
         metric_dict = {}
 
         if self.format_only:
-            logger.info(
-                f'results are saved in {osp.basename(self.jsonfile_prefix)}')
+            logger.info(f'results are saved in {osp.basename(self.jsonfile_prefix)}')
             return metric_dict
 
         for metric in self.metrics:
             ap_dict = self.nus_evaluate(
                 result_dict, classes=self.classes, metric=metric, logger=logger)
+
             for result in ap_dict:
                 metric_dict[result] = ap_dict[result]
         self._iter_runs += 1
@@ -233,7 +233,7 @@ class NuScenesMetric(BaseMetric):
         """
         metric_dict = dict()
         for name in result_dict:
-            print(f'Evaluating bboxes of {name}')
+            logger.info(f'Evaluating bboxes of {name}')
             ret_dict = self._evaluate_single(
                 result_dict[name], classes=classes, result_name=name)
             metric_dict.update(ret_dict)
@@ -277,7 +277,7 @@ class NuScenesMetric(BaseMetric):
 
         suffix = None
         if self.plot_every_run:
-            suffix = f"eval_{self._iter_runs}"
+            suffix = f"val_{self._iter_runs}"
 
         nusc_eval.main(
             render_curves=True,

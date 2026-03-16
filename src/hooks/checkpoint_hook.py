@@ -18,16 +18,15 @@ from src.utils.fileio import dump
 if TYPE_CHECKING:
     from src.runner import Runner
 
-
 logger = getLogger(__name__)
 
 
 @HOOKS.register_module()
 class CheckpointHookV2(CheckpointHook):
-
     _default_greater_keys = [
         'acc', 'top', 'AR@', 'auc', 'precision', 'mDice', 'mIoU',
-        'mAcc', 'aAcc', 'NDS', 'mAP'
+        'mAcc', 'aAcc',
+        'NDS', 'mAP'
     ]
     _default_less_keys = ['loss']
 
@@ -93,25 +92,42 @@ class CheckpointHookV2(CheckpointHook):
         self.key_indicators = key_indicators
 
     def _init_best_ckpt(self, runner: Runner):
+        """Initialize best checkpoint dict
+        Get from message hub if exists, otherwise set to None
+        And only initialize one time.
+        Args:
+            runner (Runner): Runner
+        """
         if self.is_init_best_ckpt:
             return
 
+        # runner.logger.info(f"Initializing best checkpoint path...")
         if len(self.key_indicators) == 1:
-            if 'best_ckpt' in runner.message_hub.runtime_info:
-                self.best_ckpt_path = runner.message_hub.get_info('best_ckpt')
-            else:
+            best_ckpt_path = runner.message_hub.get_info('best_ckpt')
+            if best_ckpt_path is None or not self.file_backend.isfile(best_ckpt_path, None):
                 self.best_ckpt_path = None
+                runner.logger.info(f"Set best path for {self.key_indicators[0]!r} None.")
+            else:
+                self.best_ckpt_path = best_ckpt_path
+                runner.logger.info(f"Got best path {self.best_ckpt_path!r} "
+                                   f"for {self.key_indicators[0]!r} from message hub.")
         else:
             for key_indicator in self.key_indicators:
                 best_ckpt_name = f'best_ckpt_{key_indicator}'
-                if best_ckpt_name in runner.message_hub.runtime_info:
-                    self.best_ckpt_path_dict[key_indicator] = runner.message_hub.get_info(best_ckpt_name)
-                else:
+                best_ckpt_path = runner.message_hub.get_info(best_ckpt_name, None)
+
+                if best_ckpt_path is None or not self.file_backend.isfile(best_ckpt_path):
                     self.best_ckpt_path_dict[key_indicator] = None
+                    runner.logger.info(f"Set best path for {key_indicator!r} None.")
+                else:
+                    self.best_ckpt_path_dict[key_indicator] = best_ckpt_path
+                    runner.logger.info(f"Got best path {self.best_ckpt_path_dict[key_indicator]!r} "
+                                       f"for {key_indicator!r} from message hub.")
 
         self.is_init_best_ckpt = True
 
     def _get_frequency(self):
+        """Get suffix frequency"""
         frequency = f"after every {self.interval} {{type}}"
         if self.by_epoch:
             frequency = frequency.format(type='epochs')
@@ -150,8 +166,6 @@ class CheckpointHookV2(CheckpointHook):
         # `self.out_dir` is set so the final `self.out_dir` is the
         # concatenation of `self.out_dir` and the last level directory of
         # `runner.work_dir`
-        self.reset_loss_metric = True
-
         if self.out_dir != runner.work_dir:
             basename = osp.basename(runner.work_dir.rstrip(osp.sep))
             self.out_dir = self.file_backend.join_path(
@@ -160,9 +174,11 @@ class CheckpointHookV2(CheckpointHook):
         frequency = self._get_frequency()
         runner.logger.info(f'Checkpoints will be saved to {self.out_dir!r} {frequency}.')
 
-        if self.save_best is not None and not self.is_init_best_ckpt:
+        if (self.save_best is not None
+                and not self.is_init_best_ckpt):
+            runner.logger.info(f"Initialize best checkpoints by train phase.")
             self._init_best_ckpt(runner)
-            runner.logger.info(f'The best checkpoint will be saved to {self.out_dir!r} '
+            runner.logger.info(f'The best checkpoints will be saved to {self.out_dir!r} '
                                f'based on {self.key_indicators} with rules {self.rules} {frequency}.')
 
         if self.max_keep_ckpts > 0:
@@ -189,9 +205,11 @@ class CheckpointHookV2(CheckpointHook):
 
     def after_train_epoch(self, runner: Runner, outputs: Optional[dict] = None) -> None:
         """Save the checkpoint and synchronize buffers after each epoch.
+        Also save best based on outputs which typically are loss.
 
         Args:
             runner (Runner): The runner of the training process.
+            outputs (dict): Outputs from model.
         """
         if not self.by_epoch:
             return
@@ -214,6 +232,7 @@ class CheckpointHookV2(CheckpointHook):
                          data_batch: Optional[Union[dict, tuple, list]] = None,
                          outputs: Optional[dict] = None) -> None:
         """Save the checkpoint and synchronize buffers after each iteration.
+        Also save best based on outputs which typically are loss.
 
         Args:
             runner (Runner): The runner of the training process.
@@ -246,10 +265,10 @@ class CheckpointHookV2(CheckpointHook):
         if not self.save_best:
             return
 
-        runner.logger.info("Saving best checkpoint...")
+        runner.logger.info("Saving best checkpoints...")
         # as we also track best checkpoint based on 'loss' after 'after_epoch/iter_train'
-        # when the _iter/_epoch don't plus 1, so plus 1 for being reasonable
-        # other metrics (in validation) use normally, because _iter/_epoch added 1
+        # when the _iter/_epoch don't plus 1, so plus 1 for being reasonable.
+        # Other metrics (in validation) use normally, because _iter/_epoch added 1
 
         if 'loss' in metrics:
             epoch = runner.epoch + 1
@@ -291,18 +310,22 @@ class CheckpointHookV2(CheckpointHook):
 
             if best_score_key not in runner.message_hub.runtime_info:
                 best_score = self.init_value_map[rule]
+                runner.logger.info(f'Set {best_score_key!r} to +/-inf as it is not in message hub.')
             else:
                 best_score = runner.message_hub.get_info(best_score_key)
                 # check if best ckpt path is in local
                 # best score exists while the corresponding path is not
                 # which is useless, so reset it
-                if (best_ckpt_path is None or
-                        (not self.file_backend.isfile(best_ckpt_path) and
-                         not self.file_backend.isdir(best_ckpt_path))):
-                    runner.logger.info(f"Reset best checkpoint of {key_indicator}")
+                if (best_ckpt_path is None
+                        or (not self.file_backend.isfile(best_ckpt_path)
+                            and not self.file_backend.isdir(best_ckpt_path))):
+                    runner.logger.info(f'Reset {best_score_key!r} to +/-inf because of missing local corresponding path.')
                     best_score = self.init_value_map[rule]
+                else:
+                    runner.logger.info(f'Got best score [{key_indicator!r}] from message hub')
 
             # no better skip rest
+            runner.logger.info(f"[{key_indicator}]: Best score: {best_score}, current score: {key_score}")
             if key_score is None or not self.is_better_than[key_indicator](
                     key_score, best_score):
                 continue
@@ -326,8 +349,7 @@ class CheckpointHookV2(CheckpointHook):
 
                 if is_removed:
                     runner.logger.info(
-                        f'The previous best checkpoint {best_ckpt_path!r} '
-                        'is removed')
+                        f'The previous best checkpoint {best_ckpt_path!r} is removed')
 
             best_ckpt_name = f'best_{key_indicator}_{ckpt_filename}'
             # Replace illegal characters for filename with `_`
@@ -335,12 +357,11 @@ class CheckpointHookV2(CheckpointHook):
 
             # update best checkpoint path
             if len(self.key_indicators) == 1:
-                self.best_ckpt_path = self.file_backend.join_path(  # type: ignore # noqa: E501
-                    self.out_dir, best_ckpt_name)
+                self.best_ckpt_path = self.file_backend.join_path(self.out_dir, best_ckpt_name)
                 runner.message_hub.update_info(runtime_best_ckpt_key, self.best_ckpt_path)
             else:
                 self.best_ckpt_path_dict[key_indicator] = self.file_backend.join_path(  # type: ignore # noqa: E501
-                        self.out_dir, best_ckpt_name)
+                    self.out_dir, best_ckpt_name)
                 runner.message_hub.update_info(
                     runtime_best_ckpt_key,
                     self.best_ckpt_path_dict[key_indicator])
@@ -364,19 +385,18 @@ class CheckpointHookV2(CheckpointHook):
         # or `after_train_iter` stage only keep the previous best checkpoint
         # not the current best checkpoint which causes the current best
         # checkpoint can not be removed when resuming training.
-        if ('loss' not in metrics and
-                best_ckpt_updated and
-                self.last_ckpt is not None):
+        if best_ckpt_updated:
             runner.logger.info(f"Resaving checkpoint at {cur_time} {cur_type}...")
             self._save_checkpoint_with_step(runner, cur_time, meta)
 
         best_ckpt_file = osp.join(runner.experiment_dir, 'best_checkpoint')
         best_ckpt = getattr(self, 'best_ckpt_path', None) or getattr(self, 'best_ckpt_path_dict', None)
         dump(best_ckpt, best_ckpt_file, indent=2)
-        logger.info(best_ckpt)
+        logger.info(f"Best checkpoint: {best_ckpt}")
 
     def before_val(self, runner: Runner) -> None:
         if self.save_best is not None and not self.is_init_best_ckpt:
+            runner.logger.info(f"Initialized best checkpoints by val phase.")
             frequency = self._get_frequency()
             self._init_best_ckpt(runner)
             runner.logger.info(f'The best checkpoint will be saved to {self.out_dir!r} '
@@ -396,9 +416,10 @@ class CheckpointHookV2(CheckpointHook):
                 'the best checkpoint will be skipped in this evaluation.')
             return
 
+        runner.logger.info("Save best checkpoints after val epoch.")
         self._save_best_checkpoint(runner, metrics)
 
-    def after_train(self, runner) -> None:
+    def after_train(self, runner: Runner) -> None:
         """Publish the checkpoint after training.
 
         Args:
@@ -407,6 +428,7 @@ class CheckpointHookV2(CheckpointHook):
         if self.published_keys is None:
             return
 
+        runner.logger.info("Pulishing model...")
         if self.save_last and self.last_ckpt is not None:
             self._publish_model(runner, self.last_ckpt)
 
@@ -417,7 +439,7 @@ class CheckpointHookV2(CheckpointHook):
                 self._publish_model(runner, best_ckpt)
 
     @master_only
-    def _publish_model(self, runner, ckpt_path: str) -> None:
+    def _publish_model(self, runner: Runner, ckpt_path: str) -> None:
         """Remove unnecessary keys from ckpt_path and save the new checkpoint.
 
         Args:

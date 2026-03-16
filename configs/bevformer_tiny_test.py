@@ -135,8 +135,8 @@ pts_bbox_head = dict(
         gamma=2.0,
         alpha=0.25,
         loss_weight=2.),
-    loss_bbox=dict(type='L1Loss', loss_weight=0.25),
-    loss_iou=dict(type='GIoULoss', loss_weight=0.0)
+    loss_bbox=dict(type='L1Loss', loss_weight=0.5),
+    loss_iou=dict(type='GIoULoss', loss_weight=0.25)
 )
 
 model = dict(
@@ -172,7 +172,7 @@ model = dict(
                 type='HungarianAssigner3D',
                 cls_cost=dict(type='FocalCost', weight=2.0),
                 reg_cost=dict(type='BBox3DL1Cost', weight=0.25),
-                iou_cost=dict(type='SmoothL1Cost', weight=0.0),
+                iou_cost=dict(type='SmoothL1Cost', weight=0.25),
                 # Fake cost. This is just to make it compatible with DETR head.
                 pc_range=point_cloud_range)))
 )
@@ -285,7 +285,7 @@ val_evaluator = dict(
              modality=input_modality,
              version=version,
              data_root=data_root, ann_file=data['val']['ann_file'],
-             plot_examples=2,
+             plot_examples=1,
              plot_every_run=True,
              classes=class_names)])
 
@@ -295,14 +295,23 @@ test_evaluator = dict(
                   data_root=data_root, ann_file=data['val']['ann_file'])])
 
 # ------------ Training hyperparameters ------------
-by_epoch = True
-interval = 1 if by_epoch else 100
-val_interval = 1 if by_epoch else 100
-log_interval = 50
-max_epochs = 20
-max_iters = 2000
-val_max_iters = 20
-test_max_iters = 20
+by_epoch = False
+interval = 1 if by_epoch else 250
+val_interval = 1 if by_epoch else 250
+log_interval = 50 if by_epoch else 50
+max_epochs = 5
+max_iters = 1200
+val_max_iters = 1 if by_epoch else 1
+test_max_iters = 1 if by_epoch else 1
+
+# by_epoch = False
+# interval = 1
+# val_interval = 1
+# log_interval = 1
+# max_epochs = 5
+# max_iters = 2
+# val_max_iters = 1
+# test_max_iters = 1
 # --------------------------------------------------
 
 train_cfg = dict(by_epoch=by_epoch, max_epochs=max_epochs, max_iters=max_iters, val_interval=val_interval)
@@ -346,7 +355,7 @@ visualizer = dict(
 
 optimizer = dict(
     type='AdamW',
-    lr=3e-4,
+    lr=1e-4,
     weight_decay=0.01
     # paramwise_cfg=dict(
     #     custom_keys={

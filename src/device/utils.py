@@ -84,6 +84,29 @@ def is_npu_support_full_precision() -> bool:
     ) >= version_of_support_full_precision
 
 
+DEVICE = 'cpu'
+system = platform.system()
+prefer_mps = os.getenv("USE_MPS", "0") == "1"
+
+# macOS: prioritize CPU first, as MSP may not support some ops
+if system == "Darwin":
+    if torch.cuda.is_available():
+        DEVICE = "cuda"
+    if prefer_mps and torch.backends.mps.is_available():
+        DEVICE = "mps"
+    DEVICE = "cpu"
+else:
+    # Linux/Windows
+    if is_npu_available():
+        DEVICE = "npu"
+    if torch.cuda.is_available():
+        DEVICE = "cuda"
+    if is_mlu_available():
+        DEVICE = "mlu"
+    if is_dipu_available():
+        DEVICE = "dipu"
+
+
 def get_device():
     """Returns the currently existing device type.
     Based on platform.
@@ -91,25 +114,4 @@ def get_device():
       Returns:
           str: cuda | npu | mlu | mps | cpu.
       """
-    system = platform.system()
-    prefer_mps = os.getenv("USE_MPS", "0") == "1"
-
-    # macOS: prioritize CPU first, as MSP may not support some ops
-    if system == "Darwin":
-        if torch.cuda.is_available():
-            return "cuda"
-        if prefer_mps and torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
-
-    # Linux/Windows
-    if is_npu_available():
-        return "npu"
-    if torch.cuda.is_available():
-        return "cuda"
-    if is_mlu_available():
-        return "mlu"
-    if is_dipu_available():
-        return "dipu"
-
-    return "cpu"
+    return DEVICE

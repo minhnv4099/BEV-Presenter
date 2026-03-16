@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import copy
+import warnings
+
 import torch
 import torch.nn as nn
 from typing import Optional, TYPE_CHECKING
@@ -706,7 +708,7 @@ class BEVFormerHeadGroupDETR(BEVFormerHead):
         for group_index in range(self.group_detr):
             group_query_start = group_index * num_query_per_group
             group_query_end = (group_index+1) * num_query_per_group
-            group_cls_scores =  all_cls_scores[:, :,group_query_start:group_query_end, :]
+            group_cls_scores = all_cls_scores[:, :,group_query_start:group_query_end, :]
             group_bbox_preds = all_bbox_preds[:, :,group_query_start:group_query_end, :]
             losses_cls, losses_bbox = multi_apply(
                 self.loss_single, group_cls_scores, group_bbox_preds,
