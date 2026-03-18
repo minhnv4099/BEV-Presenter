@@ -1,4 +1,0 @@
-#!/bin/bash
-
-uv venv --python 3.10.0
-uv pip install -e .

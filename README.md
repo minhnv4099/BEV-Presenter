@@ -1,20 +1,31 @@
-# The project of COMP-5421: BEV Presenter.
+<div align="center">   
+  
+# Project: Bird’s-Eye-View Representation from Multi-Camera Images via Spatiotemporal Architecture
+</div>
 
+![bev_concept.png](assets/bev_concept.png)
 
-## Create virtual environment
+https://user-images.githubusercontent.com/27915819/161392594-fc0082f7-5c37-4919-830a-2dd423c1d025.mp4
+# Changelog
+This project is inspired by the [original BEVFormer repository](https://github.com/fundamentalvision/BEVFormer/blob/master/README.md).
+In addition, we have adapted and implemented the codebase to be compatible with recent versions of PyTorch, MMCV, MMEngine, and other required libraries, ensuring smooth execution without GPU compatibility issues.
+This project is intended for educational and learning purposes only, and does not aim to reproduce or claim original research contributions.
+
+# Abstract
+This project implements a BEVFormer-based framework for 3D perception from multi-camera images in autonomous driving. 
+It learns a unified Bird’s-Eye-View (BEV) representation using spatiotemporal transformers. The model leverages spatial cross-attention to extract features from multiple camera views and temporal self-attention to fuse historical BEV information, enabling the capture of both spatial context and motion dynamics. This work focuses on reproducing and understanding the core components of BEVFormer.
+
+# Models
+![model_architecture.png](assets/model_architecture.png)
+
+# Getting Started
+### Create virtual environment and install dependencies
 ```bash
 uv venv --python 3.10.0
-```
-## Install dependencies
-```bash
 uv pip install -e .
 ```
 
-## Token
-Get token [here](https://docs.google.com/document/d/129TDtn83w0sZky860JnfVmeleP7Bv74rjDI1J3dz83M/edit?usp=sharing).
-Then paste to `~/.cache/huggingface/token` file (in Linux) or set environment variable ``HF_TOKEN`` to access [organization repository](https://huggingface.co/5421Project). 
-
-## Prepare data
+### Prepare data
 Run command to download can bus and nuscene data from [repo](https://huggingface.co/datasets/5421Project/nuscene).
 ```bash
 uv run src/tools/download_data.py \
@@ -57,7 +68,7 @@ bevformer/
 ```
 
 
-## Train
+# Train
 Run below command to see training instructions:
 ```bash
 uv run train.py --help
@@ -74,5 +85,13 @@ uv run train.py \
 Checkpoints are pushed to repo **[5421Project](https://huggingface.co/datasets/5421Project)/{experiment_name}** intervally.
 
 
-## Config
+# Config
 See [bevformer_tiny_test.py](configs/bevformer_tiny_test.py) to understand config and edit if needed.
+
+# Acknowledgement
+
+Many thanks to these excellent open source projects:
+- [dd3d](https://github.com/TRI-ML/dd3d) 
+- [detr3d](https://github.com/WangYueFt/detr3d) 
+- [mmdet3d](https://github.com/open-mmlab/mmdetection3d)
+- [BEV](https://github.com/fundamentalvision/BEVFormer/blob/master/README.md)
