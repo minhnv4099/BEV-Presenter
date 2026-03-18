@@ -2377,6 +2377,8 @@ class Runner:
                 registered.
         """
         for hook in hooks:
+            if 'repo_id' in hook and hook['repo_id'] is None:
+                continue
             self.register_hook(hook)
 
     def _check_scheduler_cfg(

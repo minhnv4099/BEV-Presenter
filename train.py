@@ -16,8 +16,8 @@ from os import path as osp
 import torch
 from mmengine.config import Config, DictAction
 from src.runner import Runner
-from src.utils.env import find_load_env
 from src.utils.logging import getLogger
+from src.utils.env import find_load_env
 
 # find_load_env()
 logger = getLogger(name="trainer")
@@ -150,10 +150,10 @@ def main():
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
 
-    if args.repo_id is not None:
-        for hook in cfg.custom_hooks:
-            if 'repo_id' in hook:
-                hook['repo_id'] = args.repo_id
+    # override repo_id from cli
+    for hook in cfg.custom_hooks:
+        if 'repo_id' in hook:
+            hook['repo_id'] = args.repo_id
 
     # import modules from string list.
     if cfg.get('custom_imports', None):

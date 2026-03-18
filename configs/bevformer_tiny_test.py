@@ -300,13 +300,13 @@ interval = 1 if by_epoch else 250
 val_interval = 1 if by_epoch else 250
 log_interval = 50 if by_epoch else 50
 max_epochs = 5
-max_iters = 1200
+max_iters = 4000
 val_max_iters = 1 if by_epoch else 1
 test_max_iters = 1 if by_epoch else 1
 
 # by_epoch = False
 # interval = 1
-# val_interval = 1
+# val_interval = 4
 # log_interval = 1
 # max_epochs = 5
 # max_iters = 2
@@ -332,13 +332,13 @@ default_hooks = dict(
 custom_hooks = [
     dict(
         type='CheckpointUploader',
-        repo_id='5421Project',    # organization name
+        repo_id=None,
         interval=interval,
         by_epoch=by_epoch,
         clean_local=False),
     dict(
         type='CheckpointResumer',
-        repo_id='5421Project',
+        repo_id=None,
         resume_type='last')
 ]
 
